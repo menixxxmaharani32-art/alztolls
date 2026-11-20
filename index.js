@@ -50,7 +50,7 @@ function parseSt(data) {
   const profile = {
     username: pick(data, ['unique_id', 'uniqueid', 'username', 'user_name']),
     name: pick(data, ['nickname', 'full_name', 'fullname', 'name']),
-    avatar: isUrl(avatar) ? avatar : null,
+    avatar: isUrl(avatar) ? avatar : (typeof avatar === 'string' && avatar.startsWith('/') ? 'https://www.tikwm.com' + avatar : null),
     bio: pick(data, ['signature', 'biography', 'bio', 'description']),
     followers: pick(data, ['followercount', 'follower_count', 'followers', 'edge_followed_by']),
     following: pick(data, ['followingcount', 'following_count', 'following', 'edge_follow']),
@@ -192,12 +192,13 @@ const handler = async (req, res) => {
 
 const app = express();
 app.get('/api', handler);
+const IMG_OK = /(^|\.)(tiktokcdn(-us)?\.com|tiktok\.com|tikwm\.com|byteimg\.com|ibyteimg\.com|muscdn\.com|cdninstagram\.com|fbcdn\.net)$/i;
 app.get('/img', async (req, res) => {
   try {
     const u = new URL(String(req.query.u || ''));
-    const okHost = /(^|\.)(tiktokcdn(-us)?\.com|tiktok\.com|tikwm\.com|byteimg\.com|ibyteimg\.com|muscdn\.com|cdninstagram\.com|fbcdn\.net)$/i.test(u.hostname);
-    if (u.protocol !== 'https:' || !okHost) return res.status(400).end();
-    const r = await fetch(u, { redirect: 'error', headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) });
+    if (u.protocol !== 'https:' || !IMG_OK.test(u.hostname)) return res.status(400).end();
+    const r = await fetch(u, { redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.tiktok.com/' }, signal: AbortSignal.timeout(8000) });
+    if (!IMG_OK.test(new URL(r.url).hostname)) return res.status(400).end();
     const t = r.headers.get('content-type') || '';
     if (!r.ok || !t.startsWith('image/')) return res.status(404).end();
     const buf = Buffer.from(await r.arrayBuffer());
