@@ -4,6 +4,7 @@
   "private": true,
   "main": "index.js",
   "dependencies": {
-    "express": "4.21.2"
+    "express": "4.21.2",
+    "@tobyg74/tiktok-api-dl": "latest"
   }
 }

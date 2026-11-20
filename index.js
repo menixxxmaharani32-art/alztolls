@@ -9,11 +9,12 @@ const SV = {
   ttstalk:   { p: 'TT_STALK', param: 'username', kind: 'st' },
   igstalk:   { p: 'IG_STALK', param: 'username', kind: 'st' },
 };
+const isUrl = v => typeof v === 'string' && /^https?:\/\//i.test(v);
 
 function walk(d, k, f) {
   if (Array.isArray(d)) d.forEach(v => walk(v, k, f));
   else if (d && typeof d === 'object') for (const [kk, v] of Object.entries(d)) walk(v, kk.toLowerCase(), f);
-  else if (typeof d === 'string' && /^https?:\/\//i.test(d)) f.push([k, d]);
+  else if (isUrl(d)) f.push([k, d]);
 }
 function find(d, k) {
   if (!d || typeof d !== 'object') return null;
@@ -27,6 +28,123 @@ function find(d, k) {
   return null;
 }
 const pick = (d, ks) => { for (const k of ks) { const r = find(d, k); if (r != null && r !== '') return r; } return null; };
+
+function parseDl(data) {
+  const found = []; walk(data, '', found);
+  let video = null, audio = null, cover = null;
+  const dd = (data && typeof data.data === 'object' && data.data) || data || {};
+  if (isUrl(dd.play)) video = dd.play;
+  if (isUrl(dd.music)) audio = dd.music;
+  if (isUrl(dd.cover)) cover = dd.cover;
+  for (const [k, x] of found) {
+    let p = ''; try { p = new URL(x).pathname.toLowerCase(); } catch {}
+    if (!audio && (/(music|audio|mp3|sound)/.test(k) || /\.(mp3|m4a)$/.test(p))) audio = x;
+    else if (!video && (/(nowm|play|video|download|hdplay|src)/.test(k) || p.endsWith('.mp4'))) video = x;
+    else if (!cover && /(cover|thumb|image|display)/.test(k)) cover = x;
+  }
+  if (!video && !audio) return null;
+  return { title: pick(data, ['title', 'desc', 'caption']), cover, video, audio };
+}
+function parseSt(data) {
+  const avatar = pick(data, ['avatarlarger', 'avatar_larger', 'profile_pic_url_hd', 'profile_pic_url', 'avatarmedium', 'avatar', 'avatar_url', 'profile_picture']);
+  const profile = {
+    username: pick(data, ['unique_id', 'uniqueid', 'username', 'user_name']),
+    name: pick(data, ['nickname', 'full_name', 'fullname', 'name']),
+    avatar: isUrl(avatar) ? avatar : null,
+    bio: pick(data, ['signature', 'biography', 'bio', 'description']),
+    followers: pick(data, ['followercount', 'follower_count', 'followers', 'edge_followed_by']),
+    following: pick(data, ['followingcount', 'following_count', 'following', 'edge_follow']),
+    posts: pick(data, ['videocount', 'video_count', 'media_count', 'posts', 'edge_owner_to_timeline_media']),
+  };
+  if (!profile.username && !profile.name && profile.followers == null) return null;
+  return { profile };
+}
+
+// Coba satu API. pfx contoh: TT_DL, TT_DL2, TT_DL3, TT_DL4
+async function attempt(pfx, sv, val, env) {
+  const host = env[pfx + '_HOST'];
+  const key = env[pfx + '_KEY'] || env.RAPIDAPI_KEY;
+  if (!key) return { err: 'RAPIDAPI_KEY belum diisi di Vercel.', code: 500 };
+  const path = env[pfx + '_PATH'] || '/';
+  const param = env[pfx + '_PARAM'] || sv.param;
+  const url = path.includes('{q}')
+    ? 'https://' + host + path.replace('{q}', encodeURIComponent(val))
+    : 'https://' + host + path + '?' + param + '=' + encodeURIComponent(val);
+  let r, data;
+  try {
+    r = await fetch(url, { headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': host }, signal: AbortSignal.timeout(8000) });
+    data = await r.json().catch(() => null);
+  } catch (e) {
+    return { err: 'Tidak bisa terhubung ke RapidAPI.', code: 502 };
+  }
+  if (!r.ok || !data) {
+    const msg = r.status === 403 ? 'Belum berlangganan API ini di RapidAPI.'
+      : r.status === 429 ? 'Kuota atau batas permintaan habis.'
+      : 'API bermasalah (kode ' + r.status + ').';
+    return { err: msg, code: r.status };
+  }
+  const out = sv.kind === 'dl' ? parseDl(data) : parseSt(data);
+  if (!out) return { err: 'Data tidak ditemukan.', code: 404, raw: env.DEBUG === '1' ? data : undefined };
+  return { out };
+}
+
+// ===== Sumber TANPA KEY (dicoba lebih dulu, hemat kuota RapidAPI). Matikan dengan KEYLESS=0 =====
+let TTLIB = null;
+try { TTLIB = require('@tobyg74/tiktok-api-dl'); } catch (e) {}
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rj) => setTimeout(() => rj(new Error('timeout')), ms))]);
+const first = v => Array.isArray(v) ? v[0] : v;
+const tw = x => (!x ? null : String(x).startsWith('/') ? 'https://www.tikwm.com' + x : x);
+
+const ttlibDl = ver => async u => {
+  if (!TTLIB) return null;
+  const r = await withTimeout(TTLIB.Downloader(u, { version: ver }), 9000);
+  if (!r || r.status !== 'success' || !r.result) return null;
+  const x = r.result;
+  const video = ver === 'v3' ? (x.videoHD || x.videoWatermark) : first(x.video && x.video.playAddr) || x.direct;
+  const audio = typeof x.music === 'string' ? x.music : first(x.music && x.music.playUrl);
+  if (!video && !audio) return null;
+  return { title: x.desc || null, cover: first(x.cover) || first(x.video && x.video.cover) || (x.author && x.author.avatar) || null, video: video || null, audio: audio || null };
+};
+const KEYLESS = {
+  tiktok: [
+    ['tikwm', async u => {
+      const r = await fetch('https://www.tikwm.com/api/?hd=1&url=' + encodeURIComponent(u), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(7000) });
+      const d = (await r.json()).data;
+      if (!d) return null;
+      const video = tw(d.play || d.hdplay), audio = tw(d.music);
+      return (video || audio) ? { title: d.title || null, cover: tw(d.cover), video, audio } : null;
+    }],
+    ['ttlib-v3', ttlibDl('v3')],
+    ['ttlib-v1', ttlibDl('v1')],
+    ['ttlib-v2', ttlibDl('v2')],
+  ],
+  ttstalk: [
+    ['tikwm', async u => {
+      const r = await fetch('https://www.tikwm.com/api/user/info?unique_id=' + encodeURIComponent(u), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(7000) });
+      const d = (await r.json()).data;
+      return d ? parseSt(d) : null;
+    }],
+    ['ttlib-stalk', async u => {
+      if (!TTLIB) return null;
+      const r = await withTimeout(TTLIB.StalkUser(u), 9000);
+      if (!r || r.status !== 'success' || !r.result) return null;
+      const a = r.result.user || {}, b = r.result.stats || {};
+      return { profile: { username: a.username, name: a.nickname, avatar: a.avatar || null, bio: a.signature, followers: b.followerCount, following: b.followingCount, posts: b.videoCount } };
+    }],
+  ],
+};
+
+// Ubah link pendek TikTok (vt./vm.) menjadi link video lengkap, karena sebagian API hanya menerima link lengkap.
+async function expandTT(u) {
+  try {
+    const x = new URL(u), h = x.hostname.toLowerCase();
+    if (!(/^(vt|vm)\./.test(h) || /^\/t\//.test(x.pathname))) return u;
+    const r = await fetch(u, { redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(5000) });
+    const f = new URL(r.url);
+    if (/\/video\/\d+/.test(f.pathname)) return f.origin + f.pathname;
+  } catch (e) {}
+  return u;
+}
 
 const handler = async (req, res) => {
   const send = (code, obj) => { res.status(code).setHeader('Cache-Control', 'no-store').json(obj); };
@@ -44,60 +162,32 @@ const handler = async (req, res) => {
     if (!/^[A-Za-z0-9._]{1,40}$/.test(val)) return send(400, { ok: false, error: 'Username tidak valid.' });
   }
 
-  const host = env[sv.p + '_HOST'];
-  const key = env[sv.p + '_KEY'] || env.RAPIDAPI_KEY;
-  if (!host) return send(500, { ok: false, error: 'Variabel ' + sv.p + '_HOST belum diisi di Vercel.' });
-  if (!key) return send(500, { ok: false, error: 'RAPIDAPI_KEY belum diisi di Vercel.' });
+  const engines = env.KEYLESS === '0' ? [] : (KEYLESS[q.action] || []);
+  // RapidAPI: PREFIX, PREFIX2, PREFIX3, PREFIX4
+  const list = [sv.p, sv.p + '2', sv.p + '3', sv.p + '4'].filter(x => env[x + '_HOST']);
+  if (!engines.length && !list.length) return send(500, { ok: false, error: 'Variabel ' + sv.p + '_HOST belum diisi di Vercel.' });
 
-  let path = env[sv.p + '_PATH'] || '/';
-  const param = env[sv.p + '_PARAM'] || sv.param;
-  let url;
-  if (path.includes('{q}')) url = 'https://' + host + path.replace('{q}', encodeURIComponent(val));
-  else url = 'https://' + host + path + '?' + param + '=' + encodeURIComponent(val);
-
-  let r, data;
-  try {
-    r = await fetch(url, { headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': host }, signal: AbortSignal.timeout(25000) });
-    data = await r.json().catch(() => null);
-  } catch (e) {
-    return send(502, { ok: false, error: 'Tidak bisa terhubung ke RapidAPI.' });
+  const dbg = env.DEBUG === '1';
+  const tried = [];
+  for (const [name, fn] of engines) {
+    try {
+      const out = await fn(val);
+      if (out) return send(200, { ok: true, ...out, ...(dbg ? { via: name, tried } : {}) });
+      tried.push({ api: name, error: 'Data tidak ditemukan.' });
+    } catch (e) { tried.push({ api: name, error: String((e && e.message) || e) }); }
   }
-  const dbg = env.DEBUG === '1' ? { raw: data } : {};
-  if (!r.ok || !data) {
-    const msg = r.status === 403 ? 'Belum berlangganan API ini di RapidAPI.' : r.status === 429 ? 'Kuota atau batas permintaan habis.' : 'API bermasalah (kode ' + r.status + ').';
-    return send(502, { ok: false, error: msg, ...dbg });
+  let full = null;
+  for (const pfx of list) {
+    let v = val;
+    // Kalau PREFIX_FULL=1, API ini dikirimi link lengkap (link pendek diubah dulu). Default: link apa adanya.
+    if (q.action === 'tiktok' && env[pfx + '_FULL'] === '1') { if (full === null) full = await expandTT(val); v = full; }
+    const r = await attempt(pfx, sv, v, env);
+    if (r.out) return send(200, { ok: true, ...r.out, ...(dbg ? { via: pfx, tried } : {}) });
+    tried.push({ api: pfx, error: r.err, code: r.code });
   }
-
-  if (sv.kind === 'dl') {
-    const found = []; walk(data, '', found);
-    let video = null, audio = null, cover = null;
-    const dd = (data && typeof data.data === 'object' && data.data) || data || {};
-    const isUrl = v => typeof v === 'string' && /^https?:\/\//i.test(v);
-    if (isUrl(dd.play)) video = dd.play;
-    if (isUrl(dd.music)) audio = dd.music;
-    if (isUrl(dd.cover)) cover = dd.cover;
-    for (const [k, x] of found) {
-      let p = ''; try { p = new URL(x).pathname.toLowerCase(); } catch {}
-      if (!audio && (/(music|audio|mp3|sound)/.test(k) || /\.(mp3|m4a)$/.test(p))) audio = x;
-      else if (!video && (/(nowm|play|video|download|hdplay|src)/.test(k) || p.endsWith('.mp4'))) video = x;
-      else if (!cover && /(cover|thumb|image|display)/.test(k)) cover = x;
-    }
-    if (!video && !audio) return send(404, { ok: false, error: 'Media tidak ditemukan. Cek DEBUG=1.', ...dbg });
-    return send(200, { ok: true, title: pick(data, ['title', 'desc', 'caption']), cover, video, audio, ...dbg });
-  }
-
-  const avatar = pick(data, ['avatarlarger', 'avatar_larger', 'profile_pic_url_hd', 'profile_pic_url', 'avatarmedium', 'avatar', 'avatar_url', 'profile_picture']);
-  const profile = {
-    username: pick(data, ['unique_id', 'uniqueid', 'username', 'user_name']),
-    name: pick(data, ['nickname', 'full_name', 'fullname', 'name']),
-    avatar: typeof avatar === 'string' && /^https?:\/\//.test(avatar) ? avatar : null,
-    bio: pick(data, ['signature', 'biography', 'bio', 'description']),
-    followers: pick(data, ['followercount', 'follower_count', 'followers', 'edge_followed_by']),
-    following: pick(data, ['followingcount', 'following_count', 'following', 'edge_follow']),
-    posts: pick(data, ['videocount', 'video_count', 'media_count', 'posts', 'edge_owner_to_timeline_media']),
-  };
-  if (!profile.username && !profile.name && profile.followers == null) return send(404, { ok: false, error: 'Profil tidak ditemukan.', ...dbg });
-  return send(200, { ok: true, profile, ...dbg });
+  const rapid = tried.find(t => t.code);
+  const msg = (rapid ? rapid.error : 'Semua sumber gagal. Coba lagi nanti.') + (tried.length > 1 ? ' Sumber cadangan juga gagal.' : '');
+  return send(rapid && rapid.code === 404 ? 404 : 502, { ok: false, error: msg, ...(dbg ? { tried } : {}) });
 };
 
 const app = express();
