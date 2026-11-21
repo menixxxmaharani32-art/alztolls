@@ -843,8 +843,8 @@ const MEME_FONTS = ['Anton', 'Archivo Black', 'Oswald', 'Comic Neue', 'Impact', 
 const hesc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // --- Penyimpanan ---
-const SB_URL = () => String(process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
-const SB_KEY = () => String(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '').trim();
+const SB_URL = () => String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+const SB_KEY = () => String(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '').trim();
 const hasDb = () => !!(SB_URL() && SB_KEY());
 const MEM = { kv: new Map(), img: new Map() };
 async function sb(path, opt = {}) {
@@ -972,7 +972,9 @@ const jsonBody = express.json({ limit: '3mb' });
 const fail = (res, e) => res.status(500).json({ ok: false, error: String((e && e.message) || e) });
 app.get('/admin/api/state', guard, async (req, res) => {
   try {
-    res.json({ ok: true, db: hasDb() ? 'supabase' : 'memory', fonts: MEME_FONTS, memes: cleanMemes(await kvGet('memes', [])), vip: cleanVip(await kvGet('vip', VIP_DEF)), logo: await logoId(true) });
+    let dbOk = hasDb(), dbErr = null;
+    if (dbOk) { try { await sb('alz_kv?select=k&limit=1'); } catch (e) { dbOk = false; dbErr = String((e && e.message) || e); console.error('supabase:', dbErr); } }
+    res.json({ ok: true, db: dbOk ? 'supabase' : 'memory', dbErr, fonts: MEME_FONTS, memes: cleanMemes(await kvGet('memes', [])), vip: cleanVip(await kvGet('vip', VIP_DEF)), logo: await logoId(true) });
   } catch (e) { fail(res, e); }
 });
 app.post('/admin/api/upload', guard, jsonBody, async (req, res) => {
