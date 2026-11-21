@@ -384,29 +384,40 @@ const ytCobalt = (b, key) => async (id, want, signal, raw, mo) => {
 // Contoh: YT_RAPID_HOST=yt-api.p.rapidapi.com  YT_RAPID_PATH=/dl?id={id}
 //         YT_RAPID2_HOST=youtube-media-downloader.p.rapidapi.com  YT_RAPID2_PATH=/v2/video/details?videoId={id}
 // Bisa sampai 3 API (YT_RAPID, YT_RAPID2, YT_RAPID3); kunci per API lewat YT_RAPIDn_KEY, kalau kosong pakai RAPIDAPI_KEY.
-const ytRapid = (host, path, key) => async (id, want, signal, raw, mo) => {
+// Kalau PATH hanya memberi info video (tanpa link), isi YT_RAPID_DL dengan path endpoint unduhan, boleh pakai {id} dan {q} (kualitas, mis. 720).
+const ytRapid = (host, path, key, dl) => async (id, want, signal, raw, mo) => {
   if (mo) throw new Error('hemat kuota, tidak dipakai untuk info');
-  const r = await fetch('https://' + host + (path || '/dl?id={id}').replace('{id}', encodeURIComponent(id)), { headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': host }, signal });
-  const d = await r.json().catch(() => null);
-  if (!r.ok || !d) throw new Error(r.status === 403 ? 'belum berlangganan API ini' : r.status === 429 ? 'kuota habis' : 'kode ' + r.status);
-  const x = d.data && typeof d.data === 'object' ? d.data : d;
-  const fm = [].concat(x.formats || [], (x.videos && x.videos.items) || []);
-  const vids = fm.filter(f => f && isUrl(f.url) && f.hasAudio !== false && !/audio\//i.test(f.mimeType || '') && (!(f.mimeType || f.extension || f.mime) || /mp4/i.test(f.mimeType || f.extension || f.mime))).map(f => ({ url: f.url, h: f.height || hOf(f.qualityLabel || f.quality) }));
-  const am = [].concat((x.adaptiveFormats || []).filter(f => /^audio\/mp4/i.test(f.mimeType || '')), ((x.audios && x.audios.items) || []).filter(f => /m4a|mp4/i.test(f.extension || f.mimeType || '')));
-  const aud = am.filter(f => f && isUrl(f.url)).sort((a, b) => (+b.bitrate || +b.averageBitrate || 0) - (+a.bitrate || +a.averageBitrate || 0))[0];
-  let video = ytBest(vids, want), audio = aud ? aud.url : null;
-  if (!video && !audio) {
-    // Bentuk data tidak dikenal: cari sendiri semua link di dalam JSON dan tebak video/audio dari nama kunci atau jenis berkas.
-    const fnd = []; walk(x, '', fnd);
-    const isAud = ([k, u]) => /(audio|mp3|m4a|sound)/i.test(k + ' ' + u);
-    const isImg = ([k, u]) => /\.(jpe?g|png|webp|gif)(\?|$)/i.test(u) || /(thumb|cover|image|avatar|poster)/i.test(k);
-    const vv = fnd.find(f => !isImg(f) && !isAud(f) && /(mp4|video|download|url|link|googlevideo)/i.test(f[0] + ' ' + f[1]));
-    const aa = fnd.find(f => !isImg(f) && isAud(f));
-    video = vv ? vv[1] : null; audio = aa ? aa[1] : null;
-    if (!video && !audio) throw new Error('respons tanpa link unduhan (kunci: ' + Object.keys(x).slice(0, 8).join(', ') + ')');
-  }
+  // Link halaman YouTube / gambar bukan file unduhan, jangan pernah dipakai.
+  const bad = u => /^https?:\/\/([a-z0-9-]+\.)*(youtube\.com|youtu\.be|ytimg\.com|ggpht\.com)(\/|$|:)/i.test(u);
+  const call = async p => {
+    const r = await fetch('https://' + host + p.replace('{id}', encodeURIComponent(id)).replace('{q}', String(want)), { headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': host }, signal });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d) throw new Error(r.status === 403 ? 'belum berlangganan API ini' : r.status === 429 ? 'kuota habis' : 'kode ' + r.status);
+    return d.data && typeof d.data === 'object' && !Array.isArray(d.data) ? d.data : d;
+  };
+  const pull = x => {
+    const fm = [].concat(x.formats || [], (x.videos && x.videos.items) || []);
+    const vids = fm.filter(f => f && isUrl(f.url) && !bad(f.url) && f.hasAudio !== false && !/audio\//i.test(f.mimeType || '') && (!(f.mimeType || f.extension || f.mime) || /mp4/i.test(f.mimeType || f.extension || f.mime))).map(f => ({ url: f.url, h: f.height || hOf(f.qualityLabel || f.quality) }));
+    const am = [].concat((x.adaptiveFormats || []).filter(f => /^audio\/mp4/i.test(f.mimeType || '')), ((x.audios && x.audios.items) || []).filter(f => /m4a|mp4/i.test(f.extension || f.mimeType || '')));
+    const aud = am.filter(f => f && isUrl(f.url) && !bad(f.url)).sort((a, b) => (+b.bitrate || +b.averageBitrate || 0) - (+a.bitrate || +a.averageBitrate || 0))[0];
+    let video = ytBest(vids, want), audio = aud ? aud.url : null;
+    if (!video && !audio) {
+      // Bentuk data tidak dikenal: cari sendiri semua link di dalam JSON dan tebak video/audio dari nama kunci atau jenis berkas.
+      const fnd = []; walk(x, '', fnd);
+      const ok = fnd.filter(([k, u]) => !bad(u) && !/\.(jpe?g|png|webp|gif)(\?|$)/i.test(u) && !/(thumb|cover|image|avatar|poster)/i.test(k));
+      const isAud = ([k, u]) => /(audio|mp3|m4a|sound)/i.test(k + ' ' + u);
+      const media = ([k, u]) => /\.(mp4|webm|m4a|mp3)(\?|$)/i.test(u) || /googlevideo\.com/i.test(u) || /(download|dl|file|link|mp4|video|audio|mp3)/i.test(k);
+      const vv = ok.find(f => !isAud(f) && media(f)), aa = ok.find(f => isAud(f) && media(f));
+      video = vv ? vv[1] : null; audio = aa ? aa[1] : null;
+    }
+    return video || audio ? { video, audio } : null;
+  };
+  const x = await call(path || '/dl?id={id}');
+  let got = pull(x);
+  if (!got && dl) got = pull(await call(dl));
+  if (!got) throw new Error('respons tanpa link unduhan (kunci: ' + Object.keys(x).slice(0, 8).join(', ') + ')' + (dl ? '' : '. Isi YT_RAPID_DL dengan path endpoint unduhan'));
   const th = Array.isArray(x.thumbnail) ? x.thumbnail : Array.isArray(x.thumbnails) ? x.thumbnails : [];
-  return { title: x.title || (x.videoDetails && x.videoDetails.title) || null, cover: ytTh(th) || (typeof x.thumbnail === 'string' ? x.thumbnail : null), duration: +x.lengthSeconds || +x.duration || +x.length || null, video, audio };
+  return { title: x.title || (x.videoDetails && x.videoDetails.title) || null, cover: ytTh(th) || (typeof x.thumbnail === 'string' ? x.thumbnail : null), duration: +x.lengthSeconds || +x.duration || +x.length || null, video: got.video, audio: got.audio };
 };
 
 // --- Innertube langsung (tanpa library, tanpa key). Tiap klien = satu sumber terpisah, jadi kalau satu diblokir yang lain tetap jalan. ---
@@ -503,7 +514,7 @@ async function ytEngines(env, mo) {
     ...uniq([...(bi ? YT_INV : []), ...auto.inv, ...csv(env.YT_INVIDIOUS)]).map(h => ['invidious:' + h, ytInv(h)]),
     ...(mo ? [] : String(env.YT_COBALT || '').split(',').map(x => x.trim()).filter(isUrl).map(b => ['cobalt:' + new URL(b).hostname, ytCobalt(b, env.YT_COBALT_KEY)])),
     ...(!mo && bi && YTDL ? [['ytdl-core', ytLib]] : []),
-    ...(mo ? [] : ['YT_RAPID', 'YT_RAPID2', 'YT_RAPID3'].filter(p => env[p + '_HOST'] && (env[p + '_KEY'] || env.RAPIDAPI_KEY)).map(p => ['rapid:' + env[p + '_HOST'], ytRapid(env[p + '_HOST'], env[p + '_PATH'], env[p + '_KEY'] || env.RAPIDAPI_KEY)])),
+    ...(mo ? [] : ['YT_RAPID', 'YT_RAPID2', 'YT_RAPID3'].filter(p => env[p + '_HOST'] && (env[p + '_KEY'] || env.RAPIDAPI_KEY)).map(p => ['rapid:' + env[p + '_HOST'], ytRapid(env[p + '_HOST'], env[p + '_PATH'], env[p + '_KEY'] || env.RAPIDAPI_KEY, env[p + '_DL'])])),
   ];
 }
 
