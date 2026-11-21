@@ -6,5 +6,8 @@
   "dependencies": {
     "express": "4.21.2",
     "@tobyg74/tiktok-api-dl": "latest"
+  },
+  "optionalDependencies": {
+    "btch-downloader": "latest"
   }
 }
