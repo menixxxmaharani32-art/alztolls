@@ -394,10 +394,19 @@ const ytRapid = (host, path, key) => async (id, want, signal, raw, mo) => {
   const vids = fm.filter(f => f && isUrl(f.url) && f.hasAudio !== false && !/audio\//i.test(f.mimeType || '') && (!(f.mimeType || f.extension || f.mime) || /mp4/i.test(f.mimeType || f.extension || f.mime))).map(f => ({ url: f.url, h: f.height || hOf(f.qualityLabel || f.quality) }));
   const am = [].concat((x.adaptiveFormats || []).filter(f => /^audio\/mp4/i.test(f.mimeType || '')), ((x.audios && x.audios.items) || []).filter(f => /m4a|mp4/i.test(f.extension || f.mimeType || '')));
   const aud = am.filter(f => f && isUrl(f.url)).sort((a, b) => (+b.bitrate || +b.averageBitrate || 0) - (+a.bitrate || +a.averageBitrate || 0))[0];
-  const video = ytBest(vids, want);
-  if (!video && !aud) throw new Error('stream kosong');
+  let video = ytBest(vids, want), audio = aud ? aud.url : null;
+  if (!video && !audio) {
+    // Bentuk data tidak dikenal: cari sendiri semua link di dalam JSON dan tebak video/audio dari nama kunci atau jenis berkas.
+    const fnd = []; walk(x, '', fnd);
+    const isAud = ([k, u]) => /(audio|mp3|m4a|sound)/i.test(k + ' ' + u);
+    const isImg = ([k, u]) => /\.(jpe?g|png|webp|gif)(\?|$)/i.test(u) || /(thumb|cover|image|avatar|poster)/i.test(k);
+    const vv = fnd.find(f => !isImg(f) && !isAud(f) && /(mp4|video|download|url|link|googlevideo)/i.test(f[0] + ' ' + f[1]));
+    const aa = fnd.find(f => !isImg(f) && isAud(f));
+    video = vv ? vv[1] : null; audio = aa ? aa[1] : null;
+    if (!video && !audio) throw new Error('respons tanpa link unduhan (kunci: ' + Object.keys(x).slice(0, 8).join(', ') + ')');
+  }
   const th = Array.isArray(x.thumbnail) ? x.thumbnail : Array.isArray(x.thumbnails) ? x.thumbnails : [];
-  return { title: x.title || (x.videoDetails && x.videoDetails.title) || null, cover: ytTh(th) || (typeof x.thumbnail === 'string' ? x.thumbnail : null), duration: +x.lengthSeconds || +x.duration || null, video, audio: aud ? aud.url : null };
+  return { title: x.title || (x.videoDetails && x.videoDetails.title) || null, cover: ytTh(th) || (typeof x.thumbnail === 'string' ? x.thumbnail : null), duration: +x.lengthSeconds || +x.duration || +x.length || null, video, audio };
 };
 
 // --- Innertube langsung (tanpa library, tanpa key). Tiap klien = satu sumber terpisah, jadi kalau satu diblokir yang lain tetap jalan. ---
@@ -536,7 +545,7 @@ async function ytHandle(q, env, send) {
   const mk = 's|' + id + '|' + want, cached = ytMemGet(mk);
   if (cached) return send(200, { ok: true, ...cached });
   const engs = await ytEngines(env, false);
-  if (!engs.length) return send(500, { ok: false, error: 'Belum ada API YouTube. Isi YT_RAPID_HOST dan YT_RAPID_PATH di Vercel.' });
+  if (!engs.length) return send(500, { ok: false, error: env.YT_RAPID_HOST && !(env.YT_RAPID_KEY || env.RAPIDAPI_KEY) ? 'RAPIDAPI_KEY belum diisi di Vercel (atau YT_RAPID_KEY).' : 'Belum ada API YouTube. Isi YT_RAPID_HOST dan YT_RAPID_PATH di Vercel.' });
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), +env.YT_TIMEOUT_MS || 7000), errs = [];
   try {
     const hit = await Promise.any(engs.map(async ([name, fn]) => {
@@ -547,7 +556,12 @@ async function ytHandle(q, env, send) {
     ytMemSet(mk, hit.out);
     return send(200, { ok: true, ...hit.out, ...(env.DEBUG === '1' ? { via: hit.via, tried: errs.slice(0, 20) } : {}) });
   } catch (e) {
-    return send(502, { ok: false, error: 'API gratis diblokir YouTube. Untuk unduhan stabil isi YT_RAPID_HOST dan YT_RAPID_PATH di Vercel (RapidAPI).', tried: errs.slice(0, 12) });
+    const rc = ['YT_RAPID', 'YT_RAPID2', 'YT_RAPID3'].some(p => env[p + '_HOST']), hk = env.YT_RAPID_KEY || env.RAPIDAPI_KEY;
+    const re = errs.filter(x => x.startsWith('rapid:')).slice(0, 2).map(x => x.replace(/^rapid:/, '')).join(' | ');
+    const em = !rc ? 'API gratis diblokir YouTube. Untuk unduhan stabil isi YT_RAPID_HOST dan YT_RAPID_PATH di Vercel.'
+      : !hk ? 'RAPIDAPI_KEY belum diisi di Vercel (atau YT_RAPID_KEY).'
+      : 'RapidAPI YouTube gagal: ' + (re || 'tidak ada respons') + '. API gratis juga diblokir.';
+    return send(502, { ok: false, error: em, tried: errs.slice(0, 12) });
   } finally { clearTimeout(timer); }
 }
 
