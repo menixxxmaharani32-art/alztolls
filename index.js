@@ -1042,12 +1042,12 @@ app.get('/admin', async (req, res) => {
 });
 // --- Studio Admin: seluruh alat situs, tanpa batas. Dibuka dari tab "Studio Admin" di dasbor. Wajib sesi admin. ---
 const STUDIO_JS = "(function(){window.__ADMIN=1;var f=window.fetch.bind(window);window.fetch=function(u,o){try{var s=typeof u==='string'?u:(u&&u.url)||'';if((s.charAt(0)==='/'&&s.charAt(1)!=='/')||s.indexOf(location.origin)===0){o=o?Object.assign({},o):{};var h=o.headers;if(h&&typeof h.set==='function'){h=new Headers(h);h.set('X-Alz','1')}else{h=Object.assign({},h||{});h['X-Alz']='1'}o.headers=h}}catch(e){}return f(u,o)}})();";
-const STUDIO_BAR = '<style>#admbar{position:fixed;z-index:40;left:12px;bottom:14px;display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:99px;background:#0b1b3a;color:#fff;font:600 12.5px/1 Archivo,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.28)}#admbar a{color:#9cc2ff;text-decoration:none}@media(max-width:560px){#admbar{bottom:calc(74px + env(safe-area-inset-bottom,0px))}}</style><div id="admbar"><span>Studio Admin \u00b7 Unlimited</span><a href="/admin">\u2190 Dasbor</a></div>';
+const STUDIO_BAR = '<style>#admbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:4px 16px;padding:8px 14px;padding-top:calc(8px + env(safe-area-inset-top,0px));background:#0b1b3a;color:#fff;font:600 12.5px/1.3 Archivo,system-ui,sans-serif}#admbar span,#admbar a{white-space:nowrap}#admbar a{color:#9cc2ff;text-decoration:none}</style><div id="admbar"><span>Studio Admin \u00b7 Unlimited</span><a href="/admin">\u2190 Dasbor</a></div>';
 app.get('/admin/studio', async (req, res) => {
   secHdr(res);
   if (!authed(req)) return res.redirect('/loginadmn');
   let h = await homeHtml();
-  h = h.replace('<head>', () => '<head><script>' + STUDIO_JS + '</script>').replace('</body>', () => STUDIO_BAR + '</body>');
+  h = h.replace('<head>', () => '<head><script>' + STUDIO_JS + '</script>').replace('<body>', () => '<body>' + STUDIO_BAR);
   res.type('html').send(h);
 });
 app.post('/admin/logout', (req, res) => {
