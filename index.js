@@ -246,7 +246,7 @@ async function expandTT(u) {
 }
 
 // ===== Lewati sfl.gl: beberapa API dijalankan BERSAMAAN, hasil pertama yang valid dipakai, sisanya dibatalkan =====
-// Bawaan: instance publik Xenox (tanpa key). Tambah cadangan lewat env SFL_API1_URL ... SFL_API6_URL (lihat README di bawah).
+// Bawaan: mesin 'native' (alur gerbang SafelinkU langsung dari server, tanpa API pihak ketiga) + instance publik Xenox sebagai cadangan. Tambah cadangan lewat env SFL_API1_URL ... SFL_API6_URL (lihat README di bawah).
 //   SFL_APIn_URL     alamat API. Pakai {u} untuk link ter-encode. GET: kalau tidak ada {u}, ?url=... ditambahkan otomatis.
 //   SFL_APIn_METHOD  GET (default) atau POST
 //   SFL_APIn_HEADERS JSON header, contoh {"Authorization":"Bearer KEY"}
@@ -254,6 +254,7 @@ async function expandTT(u) {
 //   SFL_BUILTIN=0    matikan API bawaan.   SFL_TIMEOUT_MS  batas total (default 55000)
 const SFL_HOST = /(^|\.)(sfl\.gl|safelinku\.com|idsly\.com|idsly\.bid)$/i;
 const SFL_BUILTIN = [
+  { name: 'native', native: true },
   { name: 'xenox', url: 'https://bypass-url-omega.vercel.app/api/mgvt?url={u}', method: 'GET', headers: {} },
   { name: 'ikyyxd', url: 'https://api.ikyyxd.my.id/tools/skiplink/sfl?url={u}', method: 'GET', headers: {} },
   { name: 'xenox2', url: 'https://bypass-url-omega.vercel.app/api?url={u}', method: 'GET', headers: {} },
@@ -276,7 +277,86 @@ function sflPick(data, apiHost) {
   ok.sort((a, b) => score(b) - score(a));
   return ok.length ? ok[0][1] : null;
 }
+// --- Mesin native: ikuti gerbang SafelinkU (ray_id/alias -> redirect.php -> /api/session -> /api/verify -> /api/go), rantai sfl.gl -> perantara -> tujuan ---
+const sflSleep = (ms, signal) => new Promise((ok, no) => { const t = setTimeout(ok, ms); if (signal) signal.addEventListener('abort', () => { clearTimeout(t); no(new Error('dibatalkan')); }, { once: true }); });
+function sflJar() {
+  const m = new Map();
+  return {
+    set(h) { const l = typeof h.getSetCookie === 'function' ? h.getSetCookie() : (h.get('set-cookie') ? [h.get('set-cookie')] : []); for (const s of l) { const p = String(s).split(';')[0], i = p.indexOf('='); if (i > 0) m.set(p.slice(0, i).trim(), p.slice(i + 1).trim()); } },
+    get: k => m.get(k),
+    header: () => [...m].map(([k, v]) => k + '=' + v).join('; '),
+  };
+}
+async function sflFetch(url, o, jar, signal) {
+  let method = o.method || 'GET', body = o.body, cur = url;
+  const h = { 'User-Agent': UA_D, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9', ...(o.headers || {}) };
+  for (let n = 0; n < 10; n++) {
+    const ck = jar.header(); if (ck) h.Cookie = ck;
+    const r = await fetch(cur, { method, headers: h, body, redirect: 'manual', signal });
+    jar.set(r.headers);
+    const loc = r.status >= 300 && r.status < 400 && r.headers.get('location');
+    if (loc) { h.Referer = cur; cur = new URL(loc, cur).href; method = 'GET'; body = undefined; delete h['Content-Type']; continue; }
+    r.finalUrl = cur; return r;
+  }
+  throw new Error('terlalu banyak pengalihan');
+}
+function sflToken(xsrf) {
+  let x = String(xsrf); try { x = decodeURIComponent(x); } catch (e) {}
+  const fp = crypto.createHash('sha256').update('webgl:ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)||audio:12.345678901234||canvas:abcdef123||fonts:20/25||system:8CPU,8GB,Win32,0,1,0||env:Asia/Jakarta,1920,1080,24,en-US||network:4g,10,50').digest('hex');
+  const o = '#' + Buffer.from(fp).toString('base64');
+  return x.slice(0, 128 - o.length) + o;
+}
+async function sflHop(pageUrl, html, jar, signal) {
+  const inp = n => { const t = html.match(new RegExp('<input[^>]*name=["\']' + n + '["\'][^>]*>', 'i')), v = t && /value=["\']([^"\']*)["\']/i.exec(t[0]); return v ? v[1] : null; };
+  const form = html.match(/<form[^>]+action=["']([^"']+)["']/i), ray = inp('ray_id'), alias = inp('alias');
+  if (!form || !ray || !alias) throw new Error('gerbang tidak dikenali');
+  const pa = new URL(form[1], pageUrl), origin = pa.protocol + '//' + pa.host;
+  const r2 = await sflFetch(origin + '/redirect.php?ray_id=' + encodeURIComponent(ray) + '&alias=' + encodeURIComponent(alias), { headers: { Referer: pageUrl } }, jar, signal);
+  const page1 = r2.finalUrl, x1 = jar.get('XSRF-TOKEN');
+  if (!x1) throw new Error('XSRF-TOKEN tidak ada (kemungkinan diblokir)');
+  const hd = { Origin: origin, Referer: page1, 'Content-Type': 'application/json', Accept: 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest' };
+  const post = (path, obj) => sflFetch(origin + path, { method: 'POST', headers: hd, body: JSON.stringify(obj) }, jar, signal);
+  const s1 = await (await post('/api/session', { _token: sflToken(x1) })).json().catch(() => ({}));
+  let page2 = page1;
+  if ((s1.step || 1) === 1) {
+    await sflSleep(800, signal);
+    const v = await (await post('/api/verify', { _a: 0, captcha: null, passcode: null })).json().catch(() => ({}));
+    let target = v.target || '/redirect.php'; if (target.startsWith('/')) target = origin + target;
+    const r3 = await sflFetch(target, { headers: { Referer: page1 } }, jar, signal);
+    page2 = r3.finalUrl; hd.Referer = page2;
+    await post('/api/session', { _token: sflToken(jar.get('XSRF-TOKEN') || x1) });
+  }
+  await sflSleep(1500, signal);
+  hd.Referer = page2;
+  const key = 500, go = await (await post('/api/go', { key, size: (1920 + key) * 2 + '.' + (1080 + key) * 2 })).json().catch(() => null);
+  if (!go || !go.url) throw new Error('/api/go tidak memberi tautan');
+  const ready = /^https?:\/\//i.test(go.url) ? go.url : new URL(go.url, origin).href;
+  const rr = await sflFetch(ready, { headers: { Referer: page2 } }, jar, signal), body = await rr.text();
+  const d = body.match(/window\.location\.href\s*=\s*["']([^"']+)["']/i);
+  return d ? d[1].replace(/\\\//g, '/').replace(/\\u0026/g, '&') : ready;
+}
+async function sflNative(raw, signal) {
+  let cur = raw; const seen = new Set();
+  for (let hop = 0; hop < 8; hop++) {
+    if (seen.has(cur)) break; seen.add(cur);
+    const jar = sflJar(), r = await sflFetch(cur, {}, jar, signal); cur = r.finalUrl || cur;
+    const html = await r.text();
+    if (/name=["']ray_id["']|redirect\.php/i.test(html)) {
+      const dest = await sflHop(cur, html, jar, signal);
+      if (!dest || dest === cur) throw new Error('gerbang tidak memberi tujuan');
+      cur = dest;
+      if (/(^|\.)mediafire\.com$/i.test(new URL(cur).hostname)) return cur;
+      continue;
+    }
+    const mr = html.match(/<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"']+)["']/i);
+    if (mr) { cur = new URL(mr[1].trim(), cur).href; continue; }
+    break;
+  }
+  if (cur === raw || SFL_HOST.test(new URL(cur).hostname)) throw new Error('tidak bisa melewati gerbang');
+  return cur;
+}
 async function sflRun(e, raw, signal) {
+  if (e.native) return sflNative(raw, signal);
   const u = encodeURIComponent(raw);
   let url = e.url.replace('{u}', u);
   if (e.method === 'GET' && !e.url.includes('{u}')) url += (url.includes('?') ? '&' : '?') + 'url=' + u;
@@ -602,14 +682,14 @@ const handler = async (req, res) => {
   const sv = SV[q.action];
   if (!sv) return send(400, { ok: false, error: 'Aksi tidak dikenal.' });
   let cfg0 = null; try { cfg0 = await getCfg(); } catch (e) {}
-  if (cfg0 && cfg0.off.includes(q.action)) return send(503, { ok: false, maint: true, error: 'Fitur ini sedang dalam perbaikan. Coba lagi nanti.' });
+  if (cfg0 && cfg0.off.includes(q.action) && !studio(req)) return send(503, { ok: false, maint: true, error: 'Fitur ini sedang dalam perbaikan. Coba lagi nanti.' });
   const cat = q.info === '1' ? null : q.action; // batas harian dihitung per fitur
   let g = null;
   if (cat) {
     try { g = await quota(req, res, cat); } catch (e) { g = { vip: true }; }
     if (g.ok === false) return send(429, { ok: false, limit: true, cat, error: limText(g, cat) });
   }
-  if (q.info !== '1') req._commit = async () => {
+  if (q.info !== '1' && !(g && g.admin)) req._commit = async () => {
     let w = g && g.who;
     if (!w) { try { w = await whoOf(req, res); } catch (e) { w = 'd:?'; } }
     await Promise.all([g ? quotaCommit(g).catch(statErr) : null, trackUse(q.action, w).catch(statErr)]);
@@ -923,6 +1003,8 @@ const authed = req => {
   const exp = +t.slice(0, i);
   return exp > Date.now() && safeEq(t.slice(i + 1), sign('adm:' + exp));
 };
+// Studio Admin: sesi admin yang sah + header X-Alz (hanya dikirim halaman /admin/studio) = tanpa batas harian, tanpa watermark, tetap bisa dipakai saat fitur 'perbaikan'. Beranda biasa tetap memakai batas normal.
+const studio = req => authed(req) && req.headers['x-alz'] === '1';
 const isHttps = req => req.secure || String(req.headers['x-forwarded-proto'] || '').split(',')[0] === 'https';
 const ckSet = (req, v, age) => 'alz_adm=' + v + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + age + (isHttps(req) ? '; Secure' : '');
 const secHdr = res => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex, nofollow'); res.setHeader('X-Frame-Options', 'DENY'); res.setHeader('Referrer-Policy', 'no-referrer'); };
@@ -957,6 +1039,16 @@ app.get('/admin', async (req, res) => {
   secHdr(res);
   if (!authed(req)) return res.redirect('/loginadmn');
   res.type('html').send(await withLogo(ADMIN_HTML));
+});
+// --- Studio Admin: seluruh alat situs, tanpa batas. Dibuka dari tab "Studio Admin" di dasbor. Wajib sesi admin. ---
+const STUDIO_JS = "(function(){window.__ADMIN=1;var f=window.fetch.bind(window);window.fetch=function(u,o){try{var s=typeof u==='string'?u:(u&&u.url)||'';if(s.indexOf('/music.json')===0)return Promise.resolve(new Response('{\"items\":[]}',{headers:{'Content-Type':'application/json'}}));if((s.charAt(0)==='/'&&s.charAt(1)!=='/')||s.indexOf(location.origin)===0){o=o?Object.assign({},o):{};var h=o.headers;if(h&&typeof h.set==='function'){h=new Headers(h);h.set('X-Alz','1')}else{h=Object.assign({},h||{});h['X-Alz']='1'}o.headers=h}}catch(e){}return f(u,o)}})();";
+const STUDIO_BAR = '<style>#admbar{position:fixed;z-index:40;left:12px;bottom:14px;display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:99px;background:#0b1b3a;color:#fff;font:600 12.5px/1 Archivo,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.28)}#admbar a{color:#9cc2ff;text-decoration:none}@media(max-width:560px){#admbar{bottom:calc(74px + env(safe-area-inset-bottom,0px))}}</style><div id="admbar"><span>Studio Admin \u00b7 Unlimited</span><a href="/admin">\u2190 Dasbor</a></div>';
+app.get('/admin/studio', async (req, res) => {
+  secHdr(res);
+  if (!authed(req)) return res.redirect('/loginadmn');
+  let h = await withLogo(HTML);
+  h = h.replace('<head>', () => '<head><script>' + STUDIO_JS + '</script>').replace('</body>', () => STUDIO_BAR + '</body>');
+  res.type('html').send(h);
 });
 app.post('/admin/logout', (req, res) => {
   secHdr(res);
@@ -1135,7 +1227,7 @@ const FEATS = [
   { id: 'teksputihvideo', n: 'Video Background Putih', c: 'jj' }, { id: 'chatwa', n: 'Chat WA', c: 'jj' }, { id: 'marno', n: 'Marno Blewah', c: 'jj' },
   { id: 'tiktok', n: 'Download TikTok', c: 'dl' }, { id: 'instagram', n: 'Download Instagram', c: 'dl' }, { id: 'youtube', n: 'YouTube Clip', c: 'dl' },
   { id: 'ttstalk', n: 'TikTok Stalker', c: 'st' }, { id: 'igstalk', n: 'Instagram Stalker', c: 'st' },
-  { id: 'stiker', n: 'Stiker WhatsApp', c: 'lain' }, { id: 'sekali', n: 'Lihat Foto 1x Lihat', c: 'lain' }, { id: 'mediafire', n: 'Lewati Link sfl.gl', c: 'lain' },
+  { id: 'stiker', n: 'Brat Stiker WA', c: 'lain' }, { id: 'sekali', n: 'Lihat Foto 1x Lihat', c: 'lain' }, { id: 'mediafire', n: 'Lewati Link sfl.gl', c: 'lain' },
 ];
 const FEAT_IDS = new Set(FEATS.map(f => f.id));
 const LIMF = FEATS; // fitur yang punya batas harian sendiri-sendiri
@@ -1203,6 +1295,7 @@ async function vipOf(req) {
 async function whoOf(req, res) { const v = await vipOf(req); return v ? 'v:' + v.user : 'd:' + didOf(req, res).slice(0, 8); }
 const VIP_LIM = { dl: 5, st: 10, lain: 5 }; // batas harian akun VIP per kategori; Bahan JJ (jj) unlimited
 async function quota(req, res, fid) {
+  if (studio(req)) return { vip: true, admin: true, who: 'admin' };
   const v = await vipOf(req);
   if (v) {
     const f = FEATS.find(x => x.id === fid), lim = f && VIP_LIM[f.c];
@@ -1219,6 +1312,7 @@ app.get('/me', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
     const v = await vipOf(req), did = didOf(req, res), cfg = await getCfg();
+    if (studio(req)) return res.json({ ok: true, vip: { user: 'admin', plan: 'Studio Admin', exp: Date.now() + 315576e5, since: Date.now() }, lim: null, off: [], limits: cfg.fl, names: cfg.nm, wa: cfg.wa, ch: cfg.ch, trial: cfg.tr, vlim: null, admin: true });
     let lim = null, vlim = null;
     if (v) { const u = await kvGet('use:v:' + v.id, null), ff = u && u.d === dayKey() && u.f ? u.f : {}; vlim = {}; for (const c of Object.keys(VIP_LIM)) vlim[c] = [ff['c:' + c] || 0, VIP_LIM[c]]; }
     if (!v) { const u = await usageGet(did); lim = {}; LIMF.forEach(f => { lim[f.id] = [u.f[f.id] || 0, cfg.fl[f.id]]; }); }
@@ -1230,7 +1324,8 @@ app.post('/use', express.json({ limit: '1kb' }), async (req, res) => {
   try {
     const f = txt(req.body && req.body.f, 30), cfg = await getCfg(), fl = FEATS.find(x => x.id === f);
     if (!fl) return res.status(400).json({ ok: false, error: 'Fitur tidak dikenal.' });
-    if (cfg.off.includes(f)) return res.status(503).json({ ok: false, maint: true, error: 'Fitur ini sedang dalam perbaikan. Coba lagi nanti.' });
+    if (cfg.off.includes(f) && !studio(req)) return res.status(503).json({ ok: false, maint: true, error: 'Fitur ini sedang dalam perbaikan. Coba lagi nanti.' });
+    if (studio(req)) return res.json({ ok: true }); // Studio Admin: tidak dihitung dan tidak masuk statistik
     if (fl.c === 'dl' || fl.c === 'st' || fl.id === 'mediafire') return res.json({ ok: true }); // dihitung di /api
     const g = await quota(req, res, f); // akun VIP juga lewat sini supaya pemakaiannya tercatat
     if (g.ok === false) return res.status(429).json({ ok: false, limit: true, feat: f, error: limText(g, f) });
