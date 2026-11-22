@@ -692,7 +692,7 @@ const handler = async (req, res) => {
   if (q.info !== '1' && !(g && g.admin)) req._commit = async () => {
     let w = g && g.who;
     if (!w) { try { w = await whoOf(req, res); } catch (e) { w = 'd:?'; } }
-    await Promise.all([g ? quotaCommit(g).catch(statErr) : null, trackUse(q.action, w).catch(statErr)]);
+    await Promise.all([g ? quotaCommit(g).catch(statErr) : null, trackUse(q.action, w).catch(statErr), logAct(q.action, w, q.url || q.username).catch(statErr)]);
   };
   if (sv.kind === 'bp') return sflHandle(String(q.url || '').trim(), env, send);
   if (sv.kind === 'yt') return ytHandle(q, env, send);
@@ -1308,6 +1308,49 @@ async function quota(req, res, fid) {
 }
 const quotaCommit = async g => { if (!g || g.vip || !g.ok) return; g.u.f[g.fid] = (g.u.f[g.fid] || 0) + 1; await kvSet(g.key || 'use:' + g.did, g.u); };
 
+// ===== Pantauan: pengunjung, riwayat pemakaian (teks/tautan), panduan bukti transfer =====
+const GUIDE_DEF = '1. Nominal transfer harus sama persis dengan total pesanan.\n2. Tanggal, jam, dan status berhasil terlihat jelas.\n3. Nama atau nomor tujuan pembayaran ikut terlihat.\n4. Foto utuh, tidak terpotong, tidak buram, dan tidak diedit.\n5. Satu foto untuk satu pesanan, lalu isi nomor WhatsApp yang aktif.';
+const cleanGuide = v => {
+  v = v && typeof v === 'object' ? v : {};
+  const imgs = (Array.isArray(v.imgs) ? v.imgs : []).slice(0, 4).filter(x => x && isId(x.id)).map(x => ({ id: x.id, cap: txt(x.cap, 80) }));
+  const text = String(v.text == null ? GUIDE_DEF : v.text).replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, 900);
+  return { text, imgs, on: v.on !== false };
+};
+// Catat pemakaian yang BERHASIL: siapa, layanan apa, dan teks/tautan yang dimasukkan (maks 150 entri terakhir).
+async function logAct(f, who, d) {
+  if (!FEAT_IDS.has(f)) return;
+  d = String(d == null ? '' : d).replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, 240);
+  const a = await kvGet('acts', null), list = Array.isArray(a) ? a : [];
+  list.unshift({ t: Date.now(), f, w: String(who || '?').slice(0, 40), d });
+  await kvSet('acts', list.slice(0, 150));
+}
+// Hitung pengunjung beranda: perangkat unik (cookie), unik per hari, dan total kunjungan. Admin dan bot tidak dihitung.
+async function trackVisit(req, res) {
+  try {
+    if (authed(req) || /bot|crawl|spider|slurp|preview|facebookexternalhit|headless/i.test(String(req.headers['user-agent'] || ''))) return;
+    const isNew = !/^[a-f0-9]{24}$/.test(cookieGet(req, 'alz_did')), dk = dayKey(), firstToday = cookieGet(req, 'alz_vd') !== dk;
+    didOf(req, res);
+    if (firstToday) res.append('Set-Cookie', ckPut(req, 'alz_vd', dk, 172800));
+    const s = (await kvGet('vis', null)) || {};
+    s.d = s.d || {};
+    const day = s.d[dk] || (s.d[dk] = { u: 0, v: 0 });
+    day.v++; s.tv = (s.tv || 0) + 1;
+    if (firstToday) day.u++;
+    if (isNew) s.tu = (s.tu || 0) + 1;
+    if (!s.since) s.since = Date.now();
+    Object.keys(s.d).sort().slice(0, -60).forEach(k => delete s.d[k]);
+    await kvSet('vis', s);
+  } catch (e) { statErr(e); }
+}
+function visSummary(s, now) {
+  s = s || {};
+  const dk = dayKey(), d = s.d || {}, days = [];
+  for (let i = 6; i >= 0; i--) { const k = new Date(now + 7 * 3600e3 - i * 86400e3).toISOString().slice(0, 10), x = d[k] || {}; days.push({ d: k, u: x.u || 0, v: x.v || 0 }); }
+  const td = d[dk] || {};
+  return { tu: s.tu || 0, tv: s.tv || 0, tdu: td.u || 0, tdv: td.v || 0, days, since: s.since || null };
+}
+
+
 app.get('/me', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
@@ -1319,7 +1362,7 @@ app.get('/me', async (req, res) => {
     res.json({ ok: true, vip: v ? { user: v.user, plan: v.planName, exp: v.expiresAt, since: v.activatedAt } : null, lim, off: cfg.off, limits: cfg.fl, names: cfg.nm, wa: cfg.wa, ch: cfg.ch, trial: cfg.tr, vlim });
   } catch (e) { res.json({ ok: true, vip: null, lim: null, off: [], limits: null, names: {}, wa: '', ch: '', trial: true }); }
 });
-app.post('/use', express.json({ limit: '1kb' }), async (req, res) => {
+app.post('/use', express.json({ limit: '4kb' }), async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
     const f = txt(req.body && req.body.f, 30), cfg = await getCfg(), fl = FEATS.find(x => x.id === f);
@@ -1329,7 +1372,7 @@ app.post('/use', express.json({ limit: '1kb' }), async (req, res) => {
     if (fl.c === 'dl' || fl.c === 'st' || fl.id === 'mediafire') return res.json({ ok: true }); // dihitung di /api
     const g = await quota(req, res, f); // akun VIP juga lewat sini supaya pemakaiannya tercatat
     if (g.ok === false) return res.status(429).json({ ok: false, limit: true, feat: f, error: limText(g, f) });
-    await Promise.all([quotaCommit(g).catch(statErr), trackUse(f, g.who).catch(statErr)]);
+    await Promise.all([quotaCommit(g).catch(statErr), trackUse(f, g.who).catch(statErr), logAct(f, g.who, req.body && req.body.d).catch(statErr)]);
     res.json({ ok: true });
   } catch (e) { statErr(e); res.json({ ok: true }); }
 });
@@ -1338,7 +1381,8 @@ app.get('/vip/plans', async (req, res) => {
   try {
     const v = cleanVip(await kvGet('vip', VIP_DEF));
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, plans: v.plans.filter(p => p.active), methods: v.methods.filter(m => m.active) });
+    const gd = cleanGuide(await kvGet('guide', null));
+    res.json({ ok: true, plans: v.plans.filter(p => p.active), methods: v.methods.filter(m => m.active), guide: gd.on && (gd.text || gd.imgs.length) ? { text: gd.text, imgs: gd.imgs } : null });
   } catch (e) { res.json({ ok: false, plans: [], methods: [] }); }
 });
 const ORD_RATE = new Map();
@@ -1460,10 +1504,26 @@ app.get('/admin/api/usage', guard, async (req, res) => {
       days.push({ d: k, n: Object.values(o).reduce((a, b) => a + b, 0) });
     }
     const top = Object.values(agg).sort((a, b) => b.n - a.n).slice(0, 10);
-    res.json({ ok: true, cfg, cats: CATN, feats, statErr: STAT_ERR, days, top, vu, since: s.since || null,
+    const acts0 = await kvGet('acts', []);
+    res.json({ ok: true, cfg, cats: CATN, feats, vis: visSummary(await kvGet('vis', null), now), recent: (Array.isArray(acts0) ? acts0 : []).slice(0, 6).map(x => ({ ...x, n: featName(x.f) })), statErr: STAT_ERR, days, top, vu, since: s.since || null,
       vipActive: vusers.filter(u => u.expiresAt && u.expiresAt > now).length, vipTotal: vusers.length, pending: orders.filter(o => o.status === 'pending').length, pendingTr: ((await kvGet('trials', [])) || []).filter(t => t.status === 'pending').length });
   } catch (e) { fail(res, e); }
 });
+// --- Panduan bukti transfer (foto + teks dari admin) dan riwayat aktivitas ---
+app.get('/admin/api/guide', guard, async (req, res) => { try { res.json({ ok: true, guide: cleanGuide(await kvGet('guide', null)), def: GUIDE_DEF }); } catch (e) { fail(res, e); } });
+app.put('/admin/api/guide', guard, jsonBody, async (req, res) => {
+  try {
+    const old = cleanGuide(await kvGet('guide', null)), next = cleanGuide(req.body && req.body.guide);
+    await kvSet('guide', next);
+    const keep = new Set(next.imgs.map(x => x.id));
+    await imgDel(old.imgs.map(x => x.id).filter(x => !keep.has(x))).catch(() => {});
+    res.json({ ok: true, guide: next });
+  } catch (e) { fail(res, e); }
+});
+app.get('/admin/api/acts', guard, async (req, res) => {
+  try { const a = await kvGet('acts', []); res.json({ ok: true, acts: (Array.isArray(a) ? a : []).map(x => ({ ...x, n: featName(x.f) })) }); } catch (e) { fail(res, e); }
+});
+app.post('/admin/api/acts/clear', guard, jsonBody, async (req, res) => { try { await kvSet('acts', []); res.json({ ok: true, acts: [] }); } catch (e) { fail(res, e); } });
 app.put('/admin/api/cfg', guard, jsonBody, async (req, res) => {
   try {
     const cur = await getCfg(true), b = req.body || {};
@@ -1556,7 +1616,8 @@ async function homeHtml() {
 }
 app.get('/', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.type('html').send(await homeHtml());
+  const [h] = await Promise.all([homeHtml(), trackVisit(req, res)]);
+  res.type('html').send(h);
 });
 app.use((req, res) => res.redirect('/'));
 module.exports = app;
