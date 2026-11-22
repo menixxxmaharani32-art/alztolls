@@ -1342,12 +1342,21 @@ async function trackVisit(req, res) {
     await kvSet('vis', s);
   } catch (e) { statErr(e); }
 }
-function visSummary(s, now) {
+
+// Riwayat lama (sebelum ada pencatatan teks/tautan): diambil dari statistik pemakaian yang sudah ada.
+function legacyUniq(st) { const k = new Set(); Object.values((st && st.f) || {}).forEach(e => Object.keys((e && e.u) || {}).forEach(x => k.add(x))); return k.size; }
+function mergeActs(acts, st) {
+  acts = Array.isArray(acts) ? acts : [];
+  const cut = acts.length ? acts[acts.length - 1].t : Infinity, old = [];
+  Object.entries((st && st.f) || {}).forEach(([f, e]) => Object.entries((e && e.u) || {}).forEach(([w, x]) => { if (FEAT_IDS.has(f) && x && x.l && x.l < cut) old.push({ t: x.l, f, w, d: '', old: x.n || 1 }); }));
+  return acts.concat(old).sort((a, b) => b.t - a.t).slice(0, 300).map(x => ({ ...x, n: featName(x.f) }));
+}
+function visSummary(s, now, st) {
   s = s || {};
   const dk = dayKey(), d = s.d || {}, days = [];
   for (let i = 6; i >= 0; i--) { const k = new Date(now + 7 * 3600e3 - i * 86400e3).toISOString().slice(0, 10), x = d[k] || {}; days.push({ d: k, u: x.u || 0, v: x.v || 0 }); }
   const td = d[dk] || {};
-  return { tu: s.tu || 0, tv: s.tv || 0, tdu: td.u || 0, tdv: td.v || 0, days, since: s.since || null };
+  return { tu: (s.tu || 0) + legacyUniq(st), tv: s.tv || 0, tdu: td.u || 0, tdv: td.v || 0, days, since: s.since || null };
 }
 
 
@@ -1505,7 +1514,7 @@ app.get('/admin/api/usage', guard, async (req, res) => {
     }
     const top = Object.values(agg).sort((a, b) => b.n - a.n).slice(0, 10);
     const acts0 = await kvGet('acts', []);
-    res.json({ ok: true, cfg, cats: CATN, feats, vis: visSummary(await kvGet('vis', null), now), recent: (Array.isArray(acts0) ? acts0 : []).slice(0, 6).map(x => ({ ...x, n: featName(x.f) })), statErr: STAT_ERR, days, top, vu, since: s.since || null,
+    res.json({ ok: true, cfg, cats: CATN, feats, vis: visSummary(await kvGet('vis', null), now, s), recent: mergeActs(acts0, s).slice(0, 6), statErr: STAT_ERR, days, top, vu, since: s.since || null,
       vipActive: vusers.filter(u => u.expiresAt && u.expiresAt > now).length, vipTotal: vusers.length, pending: orders.filter(o => o.status === 'pending').length, pendingTr: ((await kvGet('trials', [])) || []).filter(t => t.status === 'pending').length });
   } catch (e) { fail(res, e); }
 });
@@ -1521,7 +1530,7 @@ app.put('/admin/api/guide', guard, jsonBody, async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 app.get('/admin/api/acts', guard, async (req, res) => {
-  try { const a = await kvGet('acts', []); res.json({ ok: true, acts: (Array.isArray(a) ? a : []).map(x => ({ ...x, n: featName(x.f) })) }); } catch (e) { fail(res, e); }
+  try { const a = await kvGet('acts', []); res.json({ ok: true, acts: mergeActs(a, await kvGet('stats', null)) }); } catch (e) { fail(res, e); }
 });
 app.post('/admin/api/acts/clear', guard, jsonBody, async (req, res) => { try { await kvSet('acts', []); res.json({ ok: true, acts: [] }); } catch (e) { fail(res, e); } });
 app.put('/admin/api/cfg', guard, jsonBody, async (req, res) => {
