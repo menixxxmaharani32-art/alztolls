@@ -251,6 +251,19 @@ const CSS = [
   ".panel>h3:first-child::before{background:linear-gradient(180deg,var(--ac2),var(--ac))}",
   ".bar2 p{font-family:var(--serif);font-style:italic}",
   ".empty{background:var(--gl);border-color:var(--glb)}",
+  "/* ===== ANIMASI LIQUID GLASS (hanya transform/opacity, ringan) ===== */",
+  ".lgr{position:absolute;border-radius:50%;pointer-events:none;background:radial-gradient(circle,rgba(255,255,255,.38) 0,rgba(147,197,253,.2) 40%,rgba(147,197,253,0) 70%);transform:translate(-50%,-50%) scale(.15);opacity:.9;animation:lgr .75s cubic-bezier(.2,.7,.2,1) forwards;will-change:transform,opacity}",
+  "@keyframes lgr{to{transform:translate(-50%,-50%) scale(1);opacity:0}}",
+  ":root[data-theme=light] .lgr{background:radial-gradient(circle,rgba(59,130,246,.3) 0,rgba(59,130,246,.14) 40%,rgba(59,130,246,0) 70%)}",
+  ".lgi{position:absolute;left:0;top:0;width:0;height:0;z-index:0;pointer-events:none;transition:transform .55s cubic-bezier(.34,1.35,.5,1),width .55s cubic-bezier(.2,.8,.2,1)}",
+  ".lgi i{position:absolute;inset:0;border-radius:999px;background:linear-gradient(180deg,rgba(147,197,253,.34),rgba(59,130,246,.14));border:1px solid rgba(191,219,254,.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 0 18px rgba(59,130,246,.3)}",
+  ".lgi.mv i{animation:lgq .55s cubic-bezier(.3,.7,.3,1)}",
+  "@keyframes lgq{0%{transform:scale(1)}35%{transform:scale(1.14,.84)}70%{transform:scale(.97,1.05)}100%{transform:scale(1)}}",
+  "",
+  ".tabs{position:relative;isolation:isolate}",
+  ".tabs button{position:relative;overflow:hidden;z-index:1}",
+  ".tabs button.on{background:transparent!important;border-color:transparent!important;box-shadow:none!important}",
+  ".btn{position:relative;overflow:hidden}",
   ""
 ].join("\n");
 
@@ -522,6 +535,13 @@ const APP = [
   "if(t.dataset.gx!=null){g.imgs.splice(+t.dataset.gx,1);render();return}",
   "if(t.dataset.gu!=null||t.dataset.gd!=null){const up=t.dataset.gu!=null,i=+(up?t.dataset.gu:t.dataset.gd),j=up?i-1:i+1;if(j<0||j>=g.imgs.length)return;[g.imgs[i],g.imgs[j]]=[g.imgs[j],g.imgs[i]];render();return}",
   "if(t.id==='g_save'){t.disabled=true;t.textContent='Menyimpan...';try{const r=await api('PUT','/admin/api/guide',{guide:g});S.guide=r.guide;render();toast('Panduan disimpan')}catch(x){toast(x.message);t.disabled=false;t.textContent='Simpan panduan'}}});",
+  "/* ---------- Animasi liquid glass ---------- */",
+  "function lgRip(e){const t=e.target.closest&&e.target.closest('.btn,.tabs button');if(!t||t.disabled)return;const r=t.getBoundingClientRect(),d=Math.max(r.width,r.height)*2.4;let o=t.querySelector(':scope>.lgr');if(o)o.remove();o=document.createElement('span');o.className='lgr';o.style.cssText=`width:${d}px;height:${d}px;left:${e.clientX-r.left}px;top:${e.clientY-r.top}px`;t.appendChild(o);setTimeout(()=>o.remove(),850)}",
+  "document.addEventListener('pointerdown',lgRip,{passive:true});",
+  "function lgMove(now){const c=$('#tabs');if(!c)return;const b=c.querySelector('button.on');if(!b||!b.offsetWidth)return;let i=c.querySelector('.lgi');if(!i){i=document.createElement('span');i.className='lgi';i.innerHTML='<i></i>';c.insertBefore(i,c.firstChild)}",
+  "i.style.transition=now?'none':'';i.style.width=b.offsetWidth+'px';i.style.height=b.offsetHeight+'px';i.style.top=b.offsetTop+'px';i.style.transform=`translate3d(${b.offsetLeft}px,0,0)`;",
+  "if(now){void i.offsetWidth;i.style.transition=''}else{i.classList.remove('mv');void i.offsetWidth;i.classList.add('mv')}}",
+  "(()=>{const c=$('#tabs');if(!c)return;let f=0,seen=null;const go=()=>{cancelAnimationFrame(f);f=requestAnimationFrame(()=>{const b=c.querySelector('button.on');lgMove(seen===null);seen=b})};new MutationObserver(go).observe(c,{attributes:true,subtree:true,attributeFilter:['class']});addEventListener('resize',()=>lgMove(true));setTimeout(()=>lgMove(true),300);setTimeout(()=>lgMove(true),1200)})();",
   ""
 ].join("\n");
 
