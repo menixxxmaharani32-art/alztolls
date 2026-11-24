@@ -1293,7 +1293,7 @@ async function vipOf(req) {
   return u && u.expiresAt && u.expiresAt > Date.now() ? u : null;
 }
 async function whoOf(req, res) { const v = await vipOf(req); return v ? 'v:' + v.user : 'd:' + didOf(req, res).slice(0, 8); }
-const VIP_LIM = { dl: 5, st: 10, lain: 5 }; // batas harian akun VIP per kategori; Bahan JJ (jj) unlimited
+const VIP_LIM = { dl: 5, st: 10 }; // batas harian akun VIP per kategori; Bahan JJ (jj) dan Lainnya unlimited
 async function quota(req, res, fid) {
   if (studio(req)) return { vip: true, admin: true, who: 'admin' };
   const v = await vipOf(req);

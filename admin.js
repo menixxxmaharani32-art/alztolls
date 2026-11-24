@@ -271,6 +271,10 @@ const CSS = [
   ":root:not([data-theme=dark]) header{background:rgba(243,246,252,.95)}",
   ".panel,.pc,.fc,.kc,.mrow{box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}",
   ".btn::after{will-change:auto}",
+  "/* ===== FONT FORMAL + LEBIH HALUS ===== */",
+  ".bar2 p{font-family:inherit;font-style:normal}",
+  ".lgr{animation-duration:.55s}",
+  ".btn,.tabs button,button{touch-action:manipulation}",
   ""
 ].join("\n");
 
@@ -543,8 +547,8 @@ const APP = [
   "if(t.dataset.gu!=null||t.dataset.gd!=null){const up=t.dataset.gu!=null,i=+(up?t.dataset.gu:t.dataset.gd),j=up?i-1:i+1;if(j<0||j>=g.imgs.length)return;[g.imgs[i],g.imgs[j]]=[g.imgs[j],g.imgs[i]];render();return}",
   "if(t.id==='g_save'){t.disabled=true;t.textContent='Menyimpan...';try{const r=await api('PUT','/admin/api/guide',{guide:g});S.guide=r.guide;render();toast('Panduan disimpan')}catch(x){toast(x.message);t.disabled=false;t.textContent='Simpan panduan'}}});",
   "/* ---------- Animasi liquid glass ---------- */",
-  "function lgRip(e){const t=e.target.closest&&e.target.closest('.btn,.tabs button');if(!t||t.disabled)return;const r=t.getBoundingClientRect(),d=Math.max(r.width,r.height)*2.4;let o=t.querySelector(':scope>.lgr');if(o)o.remove();o=document.createElement('span');o.className='lgr';o.style.cssText=`width:${d}px;height:${d}px;left:${e.clientX-r.left}px;top:${e.clientY-r.top}px`;t.appendChild(o);setTimeout(()=>o.remove(),850)}",
-  "document.addEventListener('pointerdown',lgRip,{passive:true});",
+  "function lgRip(e){const t=e.target.closest&&e.target.closest('.btn,.tabs button');if(!t||t.disabled)return;const r=t.getBoundingClientRect(),d=Math.min(240,Math.max(r.width,r.height)*1.6);let x=e.clientX,y=e.clientY;if(!x&&!y){x=r.left+r.width/2;y=r.top+r.height/2}let o=t.querySelector(':scope>.lgr');if(o)o.remove();o=document.createElement('span');o.className='lgr';o.style.cssText=`width:${d}px;height:${d}px;left:${x-r.left}px;top:${y-r.top}px`;t.appendChild(o);setTimeout(()=>o.remove(),700)}",
+  "document.addEventListener('click',lgRip,{passive:true});",
   "function lgMove(now){const c=$('#tabs');if(!c)return;const b=c.querySelector('button.on');if(!b||!b.offsetWidth)return;let i=c.querySelector('.lgi');if(!i){i=document.createElement('span');i.className='lgi';i.innerHTML='<i></i>';c.insertBefore(i,c.firstChild)}",
   "i.style.transition=now?'none':'';i.style.width=b.offsetWidth+'px';i.style.height=b.offsetHeight+'px';i.style.top=b.offsetTop+'px';i.style.transform=`translate3d(${b.offsetLeft}px,0,0)`;",
   "if(now){void i.offsetWidth;i.style.transition=''}else{i.classList.remove('mv');void i.offsetWidth;i.classList.add('mv')}}",
