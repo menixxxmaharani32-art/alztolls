@@ -1224,7 +1224,7 @@ app.get('/ma/:id', async (req, res) => {
 const LIM_DEF = { jj: 5, dl: 2, st: 2, lain: 5 }; // bawaan batas gratis per hari (reset 00:00 WIB), bisa diubah dari dasbor admin
 const FEATS = [
   { id: 'tanyaustaz', n: 'Ustad Meme', c: 'jj' }, { id: 'wmp', n: 'Windows Media Player', c: 'jj' }, { id: 'teksputih', n: 'Foto Background Putih', c: 'jj' },
-  { id: 'teksputihvideo', n: 'Video Background Putih', c: 'jj' }, { id: 'chatwa', n: 'Chat WA', c: 'jj' }, { id: 'chatwa2', n: 'Chat WA 2 Arah', c: 'jj' }, { id: 'chatwaprofil', n: 'Chat WA Profil', c: 'jj' }, { id: 'marno', n: 'Marno Blewah', c: 'jj' },
+  { id: 'teksputihvideo', n: 'Video Background Putih', c: 'jj' }, { id: 'chatwa', n: 'Chat WA', c: 'jj' }, { id: 'chatwa2', n: 'Chat WA 2 Arah', c: 'jj' }, { id: 'chatwaprofil', n: 'Notif WA Profil', c: 'jj' }, { id: 'marno', n: 'Marno Blewah', c: 'jj' },
   { id: 'tiktok', n: 'Download TikTok', c: 'dl' }, { id: 'instagram', n: 'Download Instagram', c: 'dl' }, { id: 'youtube', n: 'YouTube Clip', c: 'dl' },
   { id: 'ttstalk', n: 'TikTok Stalker', c: 'st' }, { id: 'igstalk', n: 'Instagram Stalker', c: 'st' },
   { id: 'stiker', n: 'Brat Stiker WA', c: 'lain' }, { id: 'sekali', n: 'Lihat Foto 1x Lihat', c: 'lain' }, { id: 'mediafire', n: 'Lewati Link sfl.gl', c: 'lain' }, { id: 'rumus', n: 'Rumus Matematika', c: 'lain' },
