@@ -264,6 +264,13 @@ const CSS = [
   ".tabs button{position:relative;overflow:hidden;z-index:1}",
   ".tabs button.on{background:transparent!important;border-color:transparent!important;box-shadow:none!important}",
   ".btn{position:relative;overflow:hidden}",
+  "/* ===== RINGAN ===== */",
+  "html{scroll-behavior:auto}",
+  "body::before{inset:0;animation:none;will-change:auto}",
+  "header{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(7,13,29,.94)}",
+  ":root:not([data-theme=dark]) header{background:rgba(243,246,252,.95)}",
+  ".panel,.pc,.fc,.kc,.mrow{box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}",
+  ".btn::after{will-change:auto}",
   ""
 ].join("\n");
 

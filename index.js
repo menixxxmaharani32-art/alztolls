@@ -1227,7 +1227,7 @@ const FEATS = [
   { id: 'teksputihvideo', n: 'Video Background Putih', c: 'jj' }, { id: 'chatwa', n: 'Chat WA', c: 'jj' }, { id: 'marno', n: 'Marno Blewah', c: 'jj' },
   { id: 'tiktok', n: 'Download TikTok', c: 'dl' }, { id: 'instagram', n: 'Download Instagram', c: 'dl' }, { id: 'youtube', n: 'YouTube Clip', c: 'dl' },
   { id: 'ttstalk', n: 'TikTok Stalker', c: 'st' }, { id: 'igstalk', n: 'Instagram Stalker', c: 'st' },
-  { id: 'stiker', n: 'Brat Stiker WA', c: 'lain' }, { id: 'sekali', n: 'Lihat Foto 1x Lihat', c: 'lain' }, { id: 'mediafire', n: 'Lewati Link sfl.gl', c: 'lain' },
+  { id: 'stiker', n: 'Brat Stiker WA', c: 'lain' }, { id: 'sekali', n: 'Lihat Foto 1x Lihat', c: 'lain' }, { id: 'mediafire', n: 'Lewati Link sfl.gl', c: 'lain' }, { id: 'rumus', n: 'Rumus Matematika', c: 'lain' },
 ];
 const FEAT_IDS = new Set(FEATS.map(f => f.id));
 const LIMF = FEATS; // fitur yang punya batas harian sendiri-sendiri
