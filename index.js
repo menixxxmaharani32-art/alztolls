@@ -1221,7 +1221,7 @@ app.get('/ma/:id', async (req, res) => {
 
 
 // ===== VIP: pesanan, akun acak, login, dan batas pemakaian gratis =====
-const LIM_DEF = { jj: 5, dl: 2, st: 2, lain: 5 }; // bawaan batas gratis per hari (reset 00:00 WIB), bisa diubah dari dasbor admin
+const LIM_DEF = { jj: 2, dl: 1, st: 2, lain: 2 }; // bawaan jatah gratis per hari PER KATEGORI, dipakai bersama semua fitur di kategori itu (reset 00:00 WIB), bisa diubah dari dasbor admin
 const FEATS = [
   { id: 'tanyaustaz', n: 'Ustad Meme', c: 'jj' }, { id: 'wmp', n: 'Windows Media Player', c: 'jj' }, { id: 'teksputih', n: 'Foto Background Putih', c: 'jj' },
   { id: 'teksputihvideo', n: 'Video Background Putih', c: 'jj' }, { id: 'chatwa', n: 'Chat WA', c: 'jj' }, { id: 'chatwa2', n: 'Chat WA 2 Arah', c: 'jj' }, { id: 'chatwaprofil', n: 'Notif WA Profil', c: 'jj' }, { id: 'marno', n: 'Marno Blewah', c: 'jj' },
@@ -1235,17 +1235,17 @@ const featName = id => (CFG_C.v && CFG_C.v.nm && CFG_C.v.nm[id]) || (FEATS.find(
 let STAT_ERR = null; // error terakhir saat menyimpan statistik (ditampilkan di dasbor admin)
 const statErr = e => { STAT_ERR = { t: Date.now(), m: String((e && e.message) || e).slice(0, 200) }; console.error('stat:', STAT_ERR.m); };
 const CATN = { jj: 'Bahan JJ', dl: 'Downloader', st: 'Stalker', lain: 'Lainnya' };
-const limText = (g, fid) => g.isVip ? 'Batas harian VIP untuk ' + CATN[g.cat] + ' (' + g.lim + 'x per hari) sudah habis. Reset pukul 00:00 WIB.' : limMsg(featName(fid), g.lim);
-const limMsg = (name, n) => n > 0 ? 'Batas gratis ' + name + ' ' + n + 'x per hari sudah habis. Daftar VIP untuk unlimited.' : 'Pemakaian gratis ' + name + ' sedang ditutup. Daftar VIP untuk memakainya.';
+const limText = (g, fid) => g.isVip ? 'Batas harian VIP untuk ' + CATN[g.cat] + ' (' + g.lim + 'x per hari) sudah habis. Reset pukul 00:00 WIB.' : limMsg(CATN[g.cat] || featName(fid), g.lim);
+const limMsg = (name, n) => n > 0 ? 'Jatah gratis ' + name + ' ' + n + 'x per hari sudah habis (dipakai bersama semua fitur ' + name + '). Reset pukul 00:00 WIB. Daftar VIP untuk unlimited.' : 'Pemakaian gratis ' + name + ' sedang ditutup. Daftar VIP untuk memakainya.';
 const cleanCfg = v => {
   v = v && typeof v === 'object' ? v : {};
-  const lim = {}; for (const k of ['jj', 'dl', 'st', 'lain']) lim[k] = Math.round(num(v.lim && v.lim[k], 0, 9999, LIM_DEF[k]));
-  const fl = {}; LIMF.forEach(f => { fl[f.id] = Math.round(num(v.fl && v.fl[f.id], 0, 9999, lim[f.c])); });
+  const lim = {}; for (const k of ['jj', 'dl', 'st', 'lain']) lim[k] = Math.round(num(v.cl && v.cl[k], 0, 9999, LIM_DEF[k]));
+  const fl = {}; LIMF.forEach(f => { fl[f.id] = lim[f.c]; }); // tiap fitur ikut jatah kategorinya
   const off = [...new Set((Array.isArray(v.off) ? v.off : []).filter(x => FEAT_IDS.has(x)))];
   const nm = {}; FEATS.forEach(f => { const x = txt(v.nm && v.nm[f.id], 40); if (x && x !== f.n) nm[f.id] = x; });
   let wa = String(v.wa == null ? '' : v.wa).replace(/\D/g, ''); if (wa[0] === '0') wa = '62' + wa.slice(1); if (wa.length < 8 || wa.length > 15) wa = '';
   let ch = txt(v.ch, 300).replace(/\s+/g, ''); if (ch && !/^https?:\/\//i.test(ch) && /^(www\.)?(chat\.)?whatsapp\.com\//i.test(ch)) ch = 'https://' + ch; if (!/^https?:\/\//i.test(ch)) ch = '';
-  return { lim, fl, off, nm, wa, ch, tr: v.tr !== false };
+  return { lim, cl: lim, fl, off, nm, wa, ch, tr: v.tr !== false };
 };
 let CFG_C = { t: 0, v: null };
 async function getCfg(fresh) {
@@ -1303,8 +1303,9 @@ async function quota(req, res, fid) {
     const key = 'use:v:' + v.id, u = await kvGet(key, null), dk = dayKey(), cu = u && u.d === dk && u.f ? u : { d: dk, f: {} }, ck = 'c:' + f.c;
     return (cu.f[ck] || 0) >= lim ? { ok: false, u: cu, lim, isVip: true, cat: f.c } : { ok: true, isVip: true, key, u: cu, fid: ck, who: 'v:' + v.user };
   }
-  const did = didOf(req, res), u = await usageGet(did), lim = (await getCfg()).fl[fid];
-  return (u.f[fid] || 0) >= lim ? { ok: false, u, lim } : { ok: true, did, u, fid, who: 'd:' + did.slice(0, 8) };
+  const f = FEATS.find(x => x.id === fid), cat = f ? f.c : fid, ck = 'c:' + cat; // jatah gratis dipakai bersama semua fitur dalam satu kategori
+  const did = didOf(req, res), u = await usageGet(did), lim = (await getCfg()).lim[cat];
+  return (u.f[ck] || 0) >= lim ? { ok: false, u, lim, cat } : { ok: true, did, u, fid: ck, who: 'd:' + did.slice(0, 8) };
 }
 const quotaCommit = async g => { if (!g || g.vip || !g.ok) return; g.u.f[g.fid] = (g.u.f[g.fid] || 0) + 1; await kvSet(g.key || 'use:' + g.did, g.u); };
 
@@ -1367,7 +1368,7 @@ app.get('/me', async (req, res) => {
     if (studio(req)) return res.json({ ok: true, vip: { user: 'admin', plan: 'Studio Admin', exp: Date.now() + 315576e5, since: Date.now() }, lim: null, off: [], limits: cfg.fl, names: cfg.nm, wa: cfg.wa, ch: cfg.ch, trial: cfg.tr, vlim: null, admin: true });
     let lim = null, vlim = null;
     if (v) { const u = await kvGet('use:v:' + v.id, null), ff = u && u.d === dayKey() && u.f ? u.f : {}; vlim = {}; for (const c of Object.keys(VIP_LIM)) vlim[c] = [ff['c:' + c] || 0, VIP_LIM[c]]; }
-    if (!v) { const u = await usageGet(did); lim = {}; LIMF.forEach(f => { lim[f.id] = [u.f[f.id] || 0, cfg.fl[f.id]]; }); }
+    if (!v) { const u = await usageGet(did); lim = {}; LIMF.forEach(f => { lim[f.id] = [u.f['c:' + f.c] || 0, cfg.lim[f.c]]; }); }
     res.json({ ok: true, vip: v ? { user: v.user, plan: v.planName, exp: v.expiresAt, since: v.activatedAt } : null, lim, off: cfg.off, limits: cfg.fl, names: cfg.nm, wa: cfg.wa, ch: cfg.ch, trial: cfg.tr, vlim });
   } catch (e) { res.json({ ok: true, vip: null, lim: null, off: [], limits: null, names: {}, wa: '', ch: '', trial: true }); }
 });
@@ -1536,7 +1537,7 @@ app.post('/admin/api/acts/clear', guard, jsonBody, async (req, res) => { try { a
 app.put('/admin/api/cfg', guard, jsonBody, async (req, res) => {
   try {
     const cur = await getCfg(true), b = req.body || {};
-    const next = cleanCfg({ lim: cur.lim, fl: b.fl !== undefined ? b.fl : cur.fl, nm: b.nm !== undefined ? b.nm : cur.nm, off: b.off !== undefined ? b.off : cur.off, wa: b.wa !== undefined ? b.wa : cur.wa, ch: b.ch !== undefined ? b.ch : cur.ch, tr: b.tr !== undefined ? b.tr : cur.tr });
+    const next = cleanCfg({ cl: b.cl !== undefined ? b.cl : cur.cl, nm: b.nm !== undefined ? b.nm : cur.nm, off: b.off !== undefined ? b.off : cur.off, wa: b.wa !== undefined ? b.wa : cur.wa, ch: b.ch !== undefined ? b.ch : cur.ch, tr: b.tr !== undefined ? b.tr : cur.tr });
     if (b.ch !== undefined && String(b.ch).trim() && !next.ch) return res.status(400).json({ ok: false, error: 'Link saluran tidak valid. Contoh: https://whatsapp.com/channel/xxxx' });
     await kvSet('cfg', next); CFG_C = { t: Date.now(), v: next };
     const back = cleanCfg(await kvGet('cfg', null));
