@@ -633,7 +633,7 @@ const BODY = [
   "</section>",
   "<section id=\"tool\" class=\"view\"></section>",
   "</main>",
-  "<footer><div class=\"wrap\">AlzTools versi 4.0 · <a href=\"#bantuan\" id=\"fhelp\">Bantuan</a> · Gunakan dengan bijak dan hormati hak cipta.</div></footer>",
+  "<footer><div class=\"wrap\">AlzTools versi 4.1 · <a href=\"#bantuan\" id=\"fhelp\">Bantuan</a> · Gunakan dengan bijak dan hormati hak cipta.</div></footer>",
   "<div class=\"toast\" id=\"toast\"></div>",
   "",
   ""
@@ -904,7 +904,7 @@ const APP = [
   "function wa2Normal(){const cv=$('#gcv');if(!cv)return;const S=WAS.wa2,W=720,fam=WA_FAM,tm=waTm(),k0=document.createElement('canvas').getContext('2d');",
   "{const t3=$('#g3'),t4=$('#wanm'),t5=$('#wast');if(t3)S.ck=t3.value;if(t4)S.nm=t4.value;if(t5)S.st=t5.value}",
   "const nm=(S.nm||'').trim()||'Nama Kontak',st=(S.st||'').trim(),ck=(S.ck||'').toString().trim().slice(0,8)||'09:41';",
-  "const L=waMeasureN(k0,waRowsOf('wa2'),tm,fam),H=1280,oy=Math.max(290,H-130-L.h),c=gSetup(cv,W,H,1440);",
+  "const L=waMeasureN(k0,waRowsOf('wa2'),tm,fam),H=1280,oy=Math.min(290,H-130-L.h),c=gSetup(cv,W,H,1440);",
   "waWall(c,W,H,S);",
   "waChip(c,W,oy-84,'Hari ini');",
   "waBubblesN(c,L,oy,tm,fam);",
