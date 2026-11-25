@@ -1482,10 +1482,47 @@ app.post('/admin/api/orders/:id/:act', guard, jsonBody, async (req, res) => {
     res.json({ ok: true, ...(await vipData()) });
   } catch (e) { fail(res, e); }
 });
+// Admin: buat akun VIP manual (username/password boleh kosong = acak) dan atur durasi
+app.post('/admin/api/vipusers', guard, jsonBody, async (req, res) => {
+  try {
+    const b = req.body || {}, days = Math.floor(+b.days);
+    if (!(days >= 1 && days <= 3650)) return res.status(400).json({ ok: false, error: 'Durasi harus 1 sampai 3650 hari.' });
+    const users = await kvGet('vipusers', []);
+    let un = txt(b.user, 30).toLowerCase();
+    if (un) {
+      if (!/^[a-z0-9_.-]{3,30}$/.test(un)) return res.status(400).json({ ok: false, error: 'Username 3-30 karakter: huruf kecil, angka, titik, strip, atau garis bawah.' });
+      if (users.some(u => u.user === un)) return res.status(400).json({ ok: false, error: 'Username sudah dipakai.' });
+    } else do { un = 'vip' + randStr(5, 'abcdefghjkmnpqrstuvwxyz23456789'); } while (users.some(u => u.user === un));
+    let pw = String(b.pass == null ? '' : b.pass).trim();
+    if (pw) { if (pw.length < 6 || pw.length > 40 || /[\u0000-\u001f\u007f]/.test(pw)) return res.status(400).json({ ok: false, error: 'Password 6-40 karakter.' }); }
+    else pw = randStr(9, 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789');
+    const now = Date.now(), start = b.start === true;
+    const u = { id: rid(), user: un, pw: encPw(pw), planName: txt(b.plan, 40) || 'VIP Manual', days, createdAt: now, activatedAt: start ? now : null, expiresAt: start ? now + days * 86400e3 : null, manual: true };
+    users.unshift(u); await kvSet('vipusers', users);
+    res.json({ ok: true, ...(await vipData()), created: { user: un, pass: pw } });
+  } catch (e) { fail(res, e); }
+});
+app.put('/admin/api/vipusers/:id', guard, jsonBody, async (req, res) => {
+  try {
+    const id = String(req.params.id), days = Math.floor(+((req.body || {}).days));
+    if (!(days >= 1 && days <= 3650)) return res.status(400).json({ ok: false, error: 'Durasi harus 1 sampai 3650 hari.' });
+    const users = await kvGet('vipusers', []), u = users.find(x => x.id === id);
+    if (!u) return res.status(404).json({ ok: false, error: 'Akun tidak ditemukan.' });
+    u.days = days;
+    if (u.activatedAt) u.expiresAt = u.activatedAt + days * 86400e3; // akun yang sudah aktif: berakhir = tanggal aktif + durasi baru
+    await kvSet('vipusers', users);
+    res.json({ ok: true, ...(await vipData()) });
+  } catch (e) { fail(res, e); }
+});
 app.delete('/admin/api/vipusers/:id', guard, async (req, res) => {
   try {
     const id = String(req.params.id);
     await kvSet('vipusers', (await kvGet('vipusers', [])).filter(u => u.id !== id));
+    // akun dihapus: pesanan / pengajuan free trial yang menghasilkan akun ini ikut dihapus, jadi kartu akun di halaman pengunjung hilang juga
+    const ords = await kvGet('orders', []), gone = ords.filter(o => o.userId === id);
+    if (gone.length) { await kvSet('orders', ords.filter(o => o.userId !== id)); await imgDel(gone.map(o => o.proof)).catch(() => {}); }
+    const trs = await kvGet('trials', []), tg = trs.filter(t => t.userId === id);
+    if (tg.length) { await kvSet('trials', trs.filter(t => t.userId !== id)); await imgDel(tg.flatMap(t => [t.p1, t.p2])).catch(() => {}); }
     res.json({ ok: true, ...(await vipData()) });
   } catch (e) { fail(res, e); }
 });
