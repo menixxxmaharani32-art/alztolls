@@ -1307,7 +1307,29 @@ async function quota(req, res, fid) {
   const did = didOf(req, res), u = await usageGet(did), lim = (await getCfg()).lim[cat];
   return (u.f[ck] || 0) >= lim ? { ok: false, u, lim, cat } : { ok: true, did, u, fid: ck, who: 'd:' + did.slice(0, 8) };
 }
-const quotaCommit = async g => { if (!g || g.vip || !g.ok) return; g.u.f[g.fid] = (g.u.f[g.fid] || 0) + 1; await kvSet(g.key || 'use:' + g.did, g.u); };
+const quotaCommit = async g => { if (!g || g.vip || !g.ok) return; g.u.f[g.fid] = (g.u.f[g.fid] || 0) + 1; await kvSet(g.key || 'use:' + g.did, g.u); await maintain(); };
+
+// --- Pembersihan otomatis supaya database tidak membengkak ---
+// Jalan paling sering sekali per 6 jam: hapus jatah harian lama dan foto bukti yang sudah lama diproses.
+let MAINT_AT = 0;
+async function maintain() {
+  if (Date.now() - MAINT_AT < 6 * 3600e3) return;
+  MAINT_AT = Date.now();
+  try {
+    const now = Date.now(), m = (await kvGet('maint', null)) || {};
+    if (m.t && now - m.t < 6 * 3600e3) return;
+    await kvSet('maint', { t: now });
+    // 1) baris jatah harian (use:...) yang tidak disentuh lebih dari 2 hari tidak dipakai lagi
+    if (hasDb()) await sb('alz_kv?k=like.' + encodeURIComponent('use:*') + '&updated_at=lt.' + encodeURIComponent(new Date(now - 2 * 86400e3).toISOString()), { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    else { const dk = dayKey(); for (const [k, v] of MEM.kv) if (k.startsWith('use:') && v && v.d < dk) MEM.kv.delete(k); }
+    // 2) foto bukti pesanan dan free trial yang sudah diproses lebih dari 30 hari
+    const old = 30 * 86400e3;
+    const orders = await kvGet('orders', []), oo = orders.filter(o => o.proof && o.status !== 'pending' && o.doneAt && now - o.doneAt > old);
+    if (oo.length) { await imgDel(oo.map(o => o.proof)); oo.forEach(o => { o.proof = null; }); await kvSet('orders', orders); }
+    const trials = await kvGet('trials', []), tt = trials.filter(t => t.p1 && t.status !== 'pending' && t.doneAt && now - t.doneAt > old);
+    if (tt.length) { await imgDel(tt.flatMap(t => [t.p1, t.p2])); tt.forEach(t => { t.p1 = null; t.p2 = null; }); await kvSet('trials', trials); }
+  } catch (e) { console.error('maintain:', (e && e.message) || e); }
+}
 
 // ===== Pantauan: pengunjung, riwayat pemakaian (teks/tautan), panduan bukti transfer =====
 const GUIDE_DEF = '1. Nominal transfer harus sama persis dengan total pesanan.\n2. Tanggal, jam, dan status berhasil terlihat jelas.\n3. Nama atau nomor tujuan pembayaran ikut terlihat.\n4. Foto utuh, tidak terpotong, tidak buram, dan tidak diedit.\n5. Satu foto untuk satu pesanan, lalu isi nomor WhatsApp yang aktif.';
@@ -1415,7 +1437,9 @@ app.post('/vip/order', express.json({ limit: '2.5mb' }), async (req, res) => {
     const pid = rid(); await imgPut(pid, m[1], m[2]);
     const o = { id: rid(), planName: plan.name, price: plan.price, days: plan.days, perm: !!plan.perm, methodName: meth.name, contact, proof: pid, status: 'pending', createdAt: Date.now() };
     const orders = await kvGet('orders', []); orders.unshift(o);
+    const dropO = orders.slice(300);
     await kvSet('orders', orders.slice(0, 300));
+    if (dropO.length) await imgDel(dropO.map(x => x.proof)).catch(() => {}); // jangan tinggalkan foto yatim
     res.json({ ok: true, id: o.id });
   } catch (e) { fail(res, e); }
 });
@@ -1612,7 +1636,10 @@ app.post('/vip/trial', express.json({ limit: '4.5mb' }), async (req, res) => {
     const p1 = rid(), p2 = rid();
     await imgPut(p1, a1.mime, a1.data); await imgPut(p2, a2.mime, a2.data);
     const t = { id: rid(), did, contact: txt(b.contact, 40), p1, p2, status: 'pending', createdAt: Date.now() };
-    list.unshift(t); await kvSet('trials', list.slice(0, 300));
+    list.unshift(t);
+    const dropT = list.slice(300);
+    await kvSet('trials', list.slice(0, 300));
+    if (dropT.length) await imgDel(dropT.flatMap(x => [x.p1, x.p2])).catch(() => {});
     res.json({ ok: true, id: t.id });
   } catch (e) { fail(res, e); }
 });
