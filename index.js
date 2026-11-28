@@ -977,7 +977,7 @@ const cleanVip = v => {
   v = v && typeof v === 'object' ? v : {};
   const plans = (Array.isArray(v.plans) ? v.plans : []).slice(0, 30).map(p => ({
     id: isId(p && p.id) ? p.id : rid(), name: txt(p && p.name, 40) || 'Paket', price: Math.round(num(p && p.price, 0, 1e9, 0)),
-    days: Math.round(num(p && p.days, 1, 3650, 30)), note: txt(p && p.note, 120), active: !(p && p.active === false),
+    perm: !!(p && p.perm), days: p && p.perm ? 36500 : Math.round(num(p && p.days, 1, 3650, 30)), note: txt(p && p.note, 120), active: !(p && p.active === false),
   }));
   const methods = (Array.isArray(v.methods) ? v.methods : []).slice(0, 30).map(m => {
     const kind = ['bank', 'ewallet', 'qris'].includes(m && m.kind) ? m.kind : 'bank';
@@ -1369,7 +1369,7 @@ app.get('/me', async (req, res) => {
     let lim = null, vlim = null;
     if (v) { const u = await kvGet('use:v:' + v.id, null), ff = u && u.d === dayKey() && u.f ? u.f : {}; vlim = {}; for (const c of Object.keys(VIP_LIM)) vlim[c] = [ff['c:' + c] || 0, VIP_LIM[c]]; }
     if (!v) { const u = await usageGet(did); lim = {}; LIMF.forEach(f => { lim[f.id] = [u.f['c:' + f.c] || 0, cfg.lim[f.c]]; }); }
-    res.json({ ok: true, vip: v ? { user: v.user, plan: v.planName, exp: v.expiresAt, since: v.activatedAt } : null, lim, off: cfg.off, limits: cfg.fl, names: cfg.nm, wa: cfg.wa, ch: cfg.ch, trial: cfg.tr, vlim });
+    res.json({ ok: true, vip: v ? { user: v.user, plan: v.planName, exp: v.expiresAt, since: v.activatedAt, perm: !!v.perm } : null, lim, off: cfg.off, limits: cfg.fl, names: cfg.nm, wa: cfg.wa, ch: cfg.ch, trial: cfg.tr, vlim });
   } catch (e) { res.json({ ok: true, vip: null, lim: null, off: [], limits: null, names: {}, wa: '', ch: '', trial: true }); }
 });
 app.post('/use', express.json({ limit: '4kb' }), async (req, res) => {
@@ -1413,7 +1413,7 @@ app.post('/vip/order', express.json({ limit: '2.5mb' }), async (req, res) => {
     if (buf.length > 1800 * 1024) return res.status(413).json({ ok: false, error: 'Gambar bukti terlalu besar.' });
     if (sniff(buf) !== m[1]) return res.status(400).json({ ok: false, error: 'Isi berkas bukan gambar yang valid.' });
     const pid = rid(); await imgPut(pid, m[1], m[2]);
-    const o = { id: rid(), planName: plan.name, price: plan.price, days: plan.days, methodName: meth.name, contact, proof: pid, status: 'pending', createdAt: Date.now() };
+    const o = { id: rid(), planName: plan.name, price: plan.price, days: plan.days, perm: !!plan.perm, methodName: meth.name, contact, proof: pid, status: 'pending', createdAt: Date.now() };
     const orders = await kvGet('orders', []); orders.unshift(o);
     await kvSet('orders', orders.slice(0, 300));
     res.json({ ok: true, id: o.id });
@@ -1456,7 +1456,7 @@ app.post('/vip/logout', (req, res) => { res.append('Set-Cookie', ckPut(req, 'alz
 // --- Admin: setujui pesanan, lihat dan hapus akun VIP ---
 const vipData = async () => {
   const orders = (await kvGet('orders', [])).map(({ pw, ...o }) => o);
-  const users = (await kvGet('vipusers', [])).map(u => ({ id: u.id, user: u.user, pass: decPw(u.pw), planName: u.planName, days: u.days, createdAt: u.createdAt, activatedAt: u.activatedAt, expiresAt: u.expiresAt, trial: !!u.trial }));
+  const users = (await kvGet('vipusers', [])).map(u => ({ id: u.id, user: u.user, pass: decPw(u.pw), planName: u.planName, days: u.days, perm: !!u.perm, createdAt: u.createdAt, activatedAt: u.activatedAt, expiresAt: u.expiresAt, trial: !!u.trial }));
   return { orders, users };
 };
 app.get('/admin/api/vipdata', guard, async (req, res) => { try { res.json({ ok: true, ...(await vipData()) }); } catch (e) { fail(res, e); } });
@@ -1470,7 +1470,7 @@ app.post('/admin/api/orders/:id/:act', guard, jsonBody, async (req, res) => {
         const users = await kvGet('vipusers', []);
         let un; do { un = 'vip' + randStr(5, 'abcdefghjkmnpqrstuvwxyz23456789'); } while (users.some(u => u.user === un));
         const pw = randStr(9, 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789');
-        const u = { id: rid(), user: un, pw: encPw(pw), planName: o.planName, days: o.days, createdAt: Date.now(), activatedAt: null, expiresAt: null, orderId: o.id };
+        const u = { id: rid(), user: un, pw: encPw(pw), planName: o.planName, days: o.days, perm: !!o.perm, createdAt: Date.now(), activatedAt: null, expiresAt: null, orderId: o.id };
         users.unshift(u); await kvSet('vipusers', users);
         Object.assign(o, { status: 'approved', username: un, pw: encPw(pw), userId: u.id, doneAt: Date.now() });
       } else Object.assign(o, { status: 'rejected', doneAt: Date.now() });
@@ -1485,8 +1485,8 @@ app.post('/admin/api/orders/:id/:act', guard, jsonBody, async (req, res) => {
 // Admin: buat akun VIP manual (username/password boleh kosong = acak) dan atur durasi
 app.post('/admin/api/vipusers', guard, jsonBody, async (req, res) => {
   try {
-    const b = req.body || {}, days = Math.floor(+b.days);
-    if (!(days >= 1 && days <= 3650)) return res.status(400).json({ ok: false, error: 'Durasi harus 1 sampai 3650 hari.' });
+    const b = req.body || {}, perm = b.perm === true, days = perm ? 36500 : Math.floor(+b.days);
+    if (!perm && !(days >= 1 && days <= 3650)) return res.status(400).json({ ok: false, error: 'Durasi harus 1 sampai 3650 hari.' });
     const users = await kvGet('vipusers', []);
     let un = txt(b.user, 30).toLowerCase();
     if (un) {
@@ -1497,18 +1497,18 @@ app.post('/admin/api/vipusers', guard, jsonBody, async (req, res) => {
     if (pw) { if (pw.length < 6 || pw.length > 40 || /[\u0000-\u001f\u007f]/.test(pw)) return res.status(400).json({ ok: false, error: 'Password 6-40 karakter.' }); }
     else pw = randStr(9, 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789');
     const now = Date.now(), start = b.start === true;
-    const u = { id: rid(), user: un, pw: encPw(pw), planName: txt(b.plan, 40) || 'VIP Manual', days, createdAt: now, activatedAt: start ? now : null, expiresAt: start ? now + days * 86400e3 : null, manual: true };
+    const u = { id: rid(), user: un, pw: encPw(pw), planName: txt(b.plan, 40) || 'VIP Manual', days, perm, createdAt: now, activatedAt: start ? now : null, expiresAt: start ? now + days * 86400e3 : null, manual: true };
     users.unshift(u); await kvSet('vipusers', users);
     res.json({ ok: true, ...(await vipData()), created: { user: un, pass: pw } });
   } catch (e) { fail(res, e); }
 });
 app.put('/admin/api/vipusers/:id', guard, jsonBody, async (req, res) => {
   try {
-    const id = String(req.params.id), days = Math.floor(+((req.body || {}).days));
-    if (!(days >= 1 && days <= 3650)) return res.status(400).json({ ok: false, error: 'Durasi harus 1 sampai 3650 hari.' });
+    const id = String(req.params.id), raw = Math.floor(+((req.body || {}).days)), perm = raw === 0, days = perm ? 36500 : raw; // 0 = permanen
+    if (!perm && !(days >= 1 && days <= 3650)) return res.status(400).json({ ok: false, error: 'Durasi harus 1 sampai 3650 hari.' });
     const users = await kvGet('vipusers', []), u = users.find(x => x.id === id);
     if (!u) return res.status(404).json({ ok: false, error: 'Akun tidak ditemukan.' });
-    u.days = days;
+    u.days = days; u.perm = perm;
     if (u.activatedAt) u.expiresAt = u.activatedAt + days * 86400e3; // akun yang sudah aktif: berakhir = tanggal aktif + durasi baru
     await kvSet('vipusers', users);
     res.json({ ok: true, ...(await vipData()) });
